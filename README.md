@@ -1,6 +1,6 @@
 # Billig Bira
 
-Billig Bira är en publik svensk webbapp för att snabbt hitta billig öl i Norrköping. Första versionen är en statisk frontend-MVP med fiktiv mockdata och är förberedd för Supabase i senare faser.
+Billig Bira är en publik svensk webbapp för att snabbt hitta billig öl i Norrköping. Appen är byggd som en statisk Astro/React-frontend för GitHub Pages och är förberedd för Supabase som databas, rapportflöde och framtida moderering.
 
 ## Stack
 
@@ -8,7 +8,7 @@ Billig Bira är en publik svensk webbapp för att snabbt hitta billig öl i Norr
 - React
 - TypeScript
 - Tailwind CSS
-- Supabase-klient förberedd, men inte kopplad till riktig data
+- Supabase JS-klient
 - Statisk build för GitHub Pages
 
 ## Lokal utveckling
@@ -31,59 +31,74 @@ Bygg statiskt:
 npm run build
 ```
 
-Kör Astro check:
+Kör Astro/TypeScript-kontroll:
 
 ```bash
 npm run check
+```
+
+På Windows/PowerShell kan `npm.cmd` användas om script-exekvering blockerar `npm`:
+
+```powershell
+npm.cmd run build
 ```
 
 ## Miljövariabler
 
 Kopiera `.env.example` till `.env.local` vid lokal Supabase-testning:
 
-```bash
+```env
 PUBLIC_SUPABASE_URL=
-PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+PUBLIC_SUPABASE_ANON_KEY=
 ```
 
-`.env.local` är gitignore:ad. Lägg aldrig service role key, secret key, tokens, lösenord eller backend-nycklar i browserkod eller repo.
+Om variablerna saknas bygger och fungerar appen fortsatt med lokal fallback-data. Lägg aldrig `service_role`, secret keys, tokens, lösenord eller backend-nycklar i frontendkod, `.env.example`, commits eller testoutput.
 
-## Säkerhetsprinciper
+## Supabase
 
-- Endast Supabase publishable/public key får användas i frontend.
-- Service role key och andra hemliga nycklar får aldrig användas i browserkod.
-- Mockad frontend ska kunna byggas utan riktiga env-värden.
-- Framtida auth, roller och moderering ska enforced server-side via Supabase RLS och säkra policies.
+SQL-filer finns i `supabase/`:
 
-## Mockdata
+- `supabase/schema.sql` skapar tabellerna `venues`, `beer_prices` och `price_reports`, constraints, index och RLS-policies.
+- `supabase/seed.sql` lägger in tydlig exempeldata för Norrköping.
 
-Prislistan i första MVP:n använder fiktiva exempelposter för Norrköping. Den ska inte läsas som verifierad fakta om riktiga serveringsställen eller priser. Syftet är att testa layout, sortering och beräkning av pris per liter.
+Kör filerna i Supabase SQL Editor i denna ordning:
+
+1. `supabase/schema.sql`
+2. `supabase/seed.sql`
+
+Den publika frontendklienten ska bara använda `PUBLIC_SUPABASE_URL` och `PUBLIC_SUPABASE_ANON_KEY`. Läsning styrs av RLS: publika besökare kan läsa aktiva ställen och verifierade priser. Rapporter kan skickas in som `pending`, men det finns ingen publik policy för att läsa eller moderera rapporter.
+
+## Dataflöde
+
+Appens kärntyper finns i `src/lib/types.ts`.
+
+Data hämtas via `src/lib/data/prices.ts`:
+
+- `getVenues()`
+- `getBeerPrices()`
+- `submitPriceReport()`
+
+När Supabase saknar konfiguration används fallback-data från `src/data/beerPrices.ts`. Pris per liter beräknas konsekvent som:
+
+```ts
+price_sek / (volume_cl / 100)
+```
 
 ## GitHub Pages
 
 Astro är konfigurerat för GitHub Pages project site med:
 
 ```js
-base: "/billigbira"
+site: "https://mrnicke.github.io",
+base: "/billigbira",
+output: "static",
 ```
 
-Workflow finns i `.github/workflows/deploy.yml`.
-
-Manuella GitHub-steg:
-
-1. Gå till repository settings.
-2. Öppna Pages.
-3. Sätt Source till GitHub Actions.
-4. Kör workflow från `main` eller pusha till `main`.
-
-Om remote saknas kan du koppla repositoryt så här:
-
-```bash
-git remote add origin https://github.com/<ditt-anvandarnamn>/billigbira.git
-git branch -M main
-git push -u origin main
-```
+Workflow finns i `.github/workflows/deploy.yml`. Deploy sker via GitHub Actions när ändringar pushas till `main`, förutsatt att repository settings använder GitHub Actions som Pages-källa.
 
 ## Nästa steg
 
-Se `docs/PROJECT_PLAN.md` för planerade MVP-faser.
+- Skapa riktigt Supabase-projekt.
+- Kör schema och seed i Supabase.
+- Lägg in public URL och anon key som GitHub Pages/Actions-miljövariabler om build ska läsa Supabase-data.
+- Bygg admin-auth och moderering server-side med RLS och tydliga roller innan någon adminfunktion exponeras.

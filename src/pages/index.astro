@@ -2,9 +2,10 @@
 import PageShell from "../components/PageShell.astro";
 import PriceList from "../components/PriceList";
 import ReportPriceForm from "../components/ReportPriceForm";
-import { beerPrices } from "../data/beerPrices";
+import { getBeerPrices } from "../lib/data/prices";
 
 const baseUrl = import.meta.env.BASE_URL;
+const beerPrices = await getBeerPrices();
 ---
 
 <PageShell
