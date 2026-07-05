@@ -5,16 +5,23 @@ import type { PriceType } from "../lib/types";
 
 type SubmitState = "idle" | "submitting" | "saved" | "preview" | "error";
 
+function parsePositiveDecimal(value: string): number | null {
+  const parsed = Number(value.replace(",", "."));
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 export default function ReportPriceForm() {
   const [priceSek, setPriceSek] = useState("");
   const [volumeCl, setVolumeCl] = useState("40");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
+  const [message, setMessage] = useState("");
 
   const calculatedPrice = useMemo(() => {
-    const price = Number(priceSek.replace(",", "."));
-    const volume = Number(volumeCl.replace(",", "."));
+    const price = parsePositiveDecimal(priceSek);
+    const volume = parsePositiveDecimal(volumeCl);
 
-    if (!price || !volume) {
+    if (price == null || volume == null) {
       return null;
     }
 
@@ -28,7 +35,7 @@ export default function ReportPriceForm() {
           <p className="text-sm font-bold uppercase tracking-normal text-copper">Rapportera pris</p>
           <h2 className="mt-2 text-3xl font-black text-ink sm:text-4xl">Har du sett billig bira?</h2>
           <p className="mt-4 text-base leading-7 text-ink/70">
-            Formuläret kan skicka rapporter till Supabase när miljön är konfigurerad. Utan Supabase visas flödet lokalt utan att något sparas.
+            Formuläret kan skicka rapporter när databasen är ansluten. Annars kan du testa flödet lokalt utan att något sparas.
           </p>
           {calculatedPrice && (
             <div className="mt-6 rounded-lg bg-white p-4 shadow-sm">
@@ -43,28 +50,62 @@ export default function ReportPriceForm() {
           onSubmit={async (event) => {
             event.preventDefault();
             setSubmitState("submitting");
+            setMessage("");
 
             const formData = new FormData(event.currentTarget);
-            const price = Number(priceSek.replace(",", "."));
-            const volume = Number(volumeCl.replace(",", "."));
+            const venueName = String(formData.get("venue") || "").trim();
+            const beerName = String(formData.get("beerName") || "").trim();
+            const price = parsePositiveDecimal(priceSek);
+            const volume = parsePositiveDecimal(volumeCl);
 
-            if (!price || !volume) {
+            if (!venueName) {
+              setMessage("Ange serveringsställe.");
               setSubmitState("error");
               return;
             }
 
-            const result = await submitPriceReport({
-              venue_id: null,
-              venue_name: String(formData.get("venue") || "").trim(),
-              beer_name: String(formData.get("beerName") || "").trim(),
-              volume_cl: volume,
-              price_sek: price,
-              price_type: String(formData.get("priceType") || "normalpris") as PriceType,
-              observed_at: new Date().toISOString().slice(0, 10),
-              reporter_note: String(formData.get("comment") || "").trim() || null,
-            });
+            if (!beerName) {
+              setMessage("Ange öl eller prisnamn.");
+              setSubmitState("error");
+              return;
+            }
 
-            setSubmitState(result.ok ? (result.persisted ? "saved" : "preview") : "error");
+            if (price == null) {
+              setMessage("Ange ett pris som är större än 0.");
+              setSubmitState("error");
+              return;
+            }
+
+            if (volume == null) {
+              setMessage("Ange en volym som är större än 0.");
+              setSubmitState("error");
+              return;
+            }
+
+            try {
+              const result = await submitPriceReport({
+                venue_id: null,
+                venue_name: venueName,
+                beer_name: beerName,
+                volume_cl: volume,
+                price_sek: price,
+                price_type: String(formData.get("priceType") || "normalpris") as PriceType,
+                observed_at: new Date().toISOString().slice(0, 10),
+                reporter_note: String(formData.get("comment") || "").trim() || null,
+              });
+
+              setSubmitState(result.ok ? (result.persisted ? "saved" : "preview") : "error");
+              setMessage(
+                result.ok
+                  ? result.persisted
+                    ? "Tack. Rapporten är mottagen och väntar på moderering."
+                    : "Tack. Rapporten är kontrollerad, men sparas först när databasen är ansluten."
+                  : "Rapporten kunde inte tas emot just nu. Försök igen om en stund.",
+              );
+            } catch {
+              setMessage("Rapporten kunde inte tas emot just nu. Försök igen om en stund.");
+              setSubmitState("error");
+            }
           }}
         >
           <div className="grid gap-4 sm:grid-cols-2">
@@ -120,17 +161,17 @@ export default function ReportPriceForm() {
           </button>
           {submitState === "saved" && (
             <p className="mt-4 rounded-md bg-foam p-3 text-sm font-semibold text-ink">
-              Tack. Rapporten är mottagen och väntar på moderering.
+              {message}
             </p>
           )}
           {submitState === "preview" && (
             <p className="mt-4 rounded-md bg-foam p-3 text-sm font-semibold text-ink">
-              Tack. Supabase är inte konfigurerat lokalt, så rapporten sparades inte.
+              {message}
             </p>
           )}
           {submitState === "error" && (
             <p className="mt-4 rounded-md bg-foam p-3 text-sm font-semibold text-ink">
-              Rapporten kunde inte tas emot just nu. Kontrollera pris och volym och försök igen.
+              {message}
             </p>
           )}
         </form>

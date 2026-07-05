@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import type { BeerPriceListItem } from "../lib/data/prices";
+import { useEffect, useMemo, useState } from "react";
+import type { BeerPriceListItem, PriceDataStatus } from "../lib/data/prices";
 import { formatPricePerLiter, formatSek } from "../lib/pricing";
 import type { PriceType } from "../lib/types";
 
@@ -7,6 +7,7 @@ type SortMode = "pricePerLiter" | "venue" | "observedAt";
 
 type Props = {
   prices: BeerPriceListItem[];
+  dataStatus?: PriceDataStatus;
 };
 
 const priceTypeLabels: Record<PriceType, string> = {
@@ -21,8 +22,13 @@ function getVenueLocation(price: BeerPriceListItem) {
   return price.venue.district || price.venue.address || price.venue.city;
 }
 
-export default function PriceList({ prices }: Props) {
+export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
   const [sortMode, setSortMode] = useState<SortMode>("pricePerLiter");
+  const [hasHydrated, setHasHydrated] = useState(false);
+
+  useEffect(() => {
+    setHasHydrated(true);
+  }, []);
 
   const sortedPrices = useMemo(() => {
     return [...prices].sort((a, b) => {
@@ -38,6 +44,9 @@ export default function PriceList({ prices }: Props) {
     });
   }, [prices, sortMode]);
 
+  const shouldShowLoading = !hasHydrated && prices.length === 0;
+  const shouldShowFallbackNotice = dataStatus === "fallback" && sortedPrices.length > 0;
+
   return (
     <section id="priser" className="bg-white px-4 py-12 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-6xl">
@@ -46,7 +55,7 @@ export default function PriceList({ prices }: Props) {
             <p className="text-sm font-bold uppercase tracking-normal text-copper">Prislistan</p>
             <h2 className="mt-2 text-3xl font-black text-ink sm:text-4xl">Billigast per liter först</h2>
             <p className="mt-3 max-w-2xl text-base leading-7 text-ink/70">
-              Literpris räknas konsekvent från pris och volym. Om Supabase inte är konfigurerat visas lokal exempeldata.
+              Literpris räknas konsekvent från pris och volym. Verifierade priser visas billigast per liter först.
             </p>
           </div>
           <label className="flex w-full max-w-xs flex-col gap-2 text-sm font-bold text-ink md:items-start">
@@ -63,57 +72,72 @@ export default function PriceList({ prices }: Props) {
           </label>
         </div>
 
-        {sortedPrices.length === 0 && (
+        {shouldShowFallbackNotice && (
+          <p className="mt-6 rounded-md bg-foam px-4 py-3 text-sm font-semibold text-ink/70">
+            Visar exempeldata tills aktuella verifierade priser finns tillgängliga.
+          </p>
+        )}
+
+        {shouldShowLoading && (
+          <div className="mt-8 rounded-lg border border-black/10 bg-foam p-6 text-center">
+            <h3 className="text-xl font-black text-ink">Laddar priser...</h3>
+            <p className="mt-2 text-ink/70">Prislistan visas strax.</p>
+          </div>
+        )}
+
+        {!shouldShowLoading && sortedPrices.length === 0 && (
           <div className="mt-8 rounded-lg border border-black/10 bg-foam p-6 text-center">
             <h3 className="text-xl font-black text-ink">Inga priser att visa ännu</h3>
             <p className="mt-2 text-ink/70">Rapporterade och verifierade priser visas här när data finns tillgänglig.</p>
           </div>
         )}
 
-        <div className="mt-8 grid gap-4 lg:hidden">
-          {sortedPrices.map((price) => (
-            <article key={price.id} className="rounded-lg border border-black/10 bg-foam p-4 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-xl font-black text-ink">{price.venue.name}</h3>
-                  <p className="mt-1 text-sm text-ink/65">{getVenueLocation(price)}</p>
+        {!shouldShowLoading && (
+          <div className="mt-8 grid gap-4 lg:hidden">
+            {sortedPrices.map((price) => (
+              <article key={price.id} className="rounded-lg border border-black/10 bg-foam p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-xl font-black text-ink">{price.venue.name}</h3>
+                    <p className="mt-1 text-sm text-ink/65">{getVenueLocation(price)}</p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${
+                      price.is_verified ? "bg-hop text-white" : "bg-white text-ink ring-1 ring-black/15"
+                    }`}
+                  >
+                    {price.is_verified ? "Verifierad" : "Ej verifierad"}
+                  </span>
                 </div>
-                <span
-                  className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${
-                    price.is_verified ? "bg-hop text-white" : "bg-white text-ink ring-1 ring-black/15"
-                  }`}
-                >
-                  {price.is_verified ? "Verifierad" : "Ej verifierad"}
-                </span>
-              </div>
-              <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="font-bold text-ink/55">Öl/prisnamn</p>
-                  <p className="mt-1 font-semibold">{price.beer_name}</p>
+                <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="font-bold text-ink/55">Öl/prisnamn</p>
+                    <p className="mt-1 font-semibold">{price.beer_name}</p>
+                  </div>
+                  <div>
+                    <p className="font-bold text-ink/55">Pristyp</p>
+                    <p className="mt-1 font-semibold">{priceTypeLabels[price.price_type]}</p>
+                  </div>
+                  <div>
+                    <p className="font-bold text-ink/55">Pris</p>
+                    <p className="mt-1 text-2xl font-black">{formatSek(price.price_sek)}</p>
+                  </div>
+                  <div>
+                    <p className="font-bold text-ink/55">Volym</p>
+                    <p className="mt-1 text-2xl font-black">{price.volume_cl} cl</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-bold text-ink/55">Pristyp</p>
-                  <p className="mt-1 font-semibold">{priceTypeLabels[price.price_type]}</p>
+                <div className="mt-5 rounded-md bg-white p-3">
+                  <p className="text-sm font-bold text-ink/55">Pris per liter</p>
+                  <p className="mt-1 text-2xl font-black text-hop">{formatPricePerLiter(price.price_per_liter_sek)}</p>
                 </div>
-                <div>
-                  <p className="font-bold text-ink/55">Pris</p>
-                  <p className="mt-1 text-2xl font-black">{formatSek(price.price_sek)}</p>
-                </div>
-                <div>
-                  <p className="font-bold text-ink/55">Volym</p>
-                  <p className="mt-1 text-2xl font-black">{price.volume_cl} cl</p>
-                </div>
-              </div>
-              <div className="mt-5 rounded-md bg-white p-3">
-                <p className="text-sm font-bold text-ink/55">Pris per liter</p>
-                <p className="mt-1 text-2xl font-black text-hop">{formatPricePerLiter(price.price_per_liter_sek)}</p>
-              </div>
-              <p className="mt-4 text-sm text-ink/60">Observerat: {price.observed_at}</p>
-            </article>
-          ))}
-        </div>
+                <p className="mt-4 text-sm text-ink/60">Observerat: {price.observed_at}</p>
+              </article>
+            ))}
+          </div>
+        )}
 
-        {sortedPrices.length > 0 && (
+        {!shouldShowLoading && sortedPrices.length > 0 && (
           <div className="mt-8 hidden overflow-hidden rounded-lg border border-black/10 lg:block">
             <table className="w-full border-collapse bg-white text-left text-sm">
               <thead className="bg-foam text-xs uppercase tracking-normal text-ink/65">

@@ -2,10 +2,10 @@
 import PageShell from "../components/PageShell.astro";
 import PriceList from "../components/PriceList";
 import ReportPriceForm from "../components/ReportPriceForm";
-import { getBeerPrices } from "../lib/data/prices";
+import { getBeerPriceList } from "../lib/data/prices";
 
 const baseUrl = import.meta.env.BASE_URL;
-const beerPrices = await getBeerPrices();
+const beerPriceList = await getBeerPriceList();
 ---
 
 <PageShell
@@ -62,7 +62,7 @@ const beerPrices = await getBeerPrices();
       </div>
     </section>
 
-    <PriceList prices={beerPrices} client:load />
+    <PriceList prices={beerPriceList.prices} dataStatus={beerPriceList.status} client:load />
     <ReportPriceForm client:load />
   </main>
 </PageShell>

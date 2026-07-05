@@ -68,6 +68,20 @@ Kör filerna i Supabase SQL Editor i denna ordning:
 
 Den publika frontendklienten ska bara använda `PUBLIC_SUPABASE_URL` och `PUBLIC_SUPABASE_ANON_KEY`. Läsning styrs av RLS: publika besökare kan läsa aktiva ställen och verifierade priser. Rapporter kan skickas in som `pending`, men det finns ingen publik policy för att läsa eller moderera rapporter.
 
+### Supabase-verifiering
+
+Använd denna checklista när Supabase-kopplingen verifieras lokalt och i GitHub Pages-builden:
+
+- Kör `supabase/schema.sql` i Supabase SQL Editor.
+- Kör `supabase/seed.sql` efter schemat.
+- Skapa lokal `.env` eller `.env.local` med `PUBLIC_SUPABASE_URL` och `PUBLIC_SUPABASE_ANON_KEY`.
+- Lägg in samma namn som GitHub Actions repository variables.
+- Säkerställ att `.github/workflows/deploy.yml` exponerar `vars.PUBLIC_SUPABASE_URL` och `vars.PUBLIC_SUPABASE_ANON_KEY` till Astro-buildens `env`.
+- Kör `pnpm.cmd run build`.
+- Kontrollera att startsidan visar Supabase-data i stället för exempeldata.
+- Skicka en testrapport via formuläret.
+- Kontrollera att rapporten finns som `pending` i tabellen `price_reports` i Supabase Table Editor.
+
 ## Dataflöde
 
 Appens kärntyper finns i `src/lib/types.ts`.
@@ -98,7 +112,4 @@ Workflow finns i `.github/workflows/deploy.yml`. Deploy sker via GitHub Actions 
 
 ## Nästa steg
 
-- Skapa riktigt Supabase-projekt.
-- Kör schema och seed i Supabase.
-- Lägg in public URL och anon key som GitHub Pages/Actions-miljövariabler om build ska läsa Supabase-data.
 - Bygg admin-auth och moderering server-side med RLS och tydliga roller innan någon adminfunktion exponeras.

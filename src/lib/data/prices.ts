@@ -8,6 +8,13 @@ export type BeerPriceListItem = BeerPrice & {
   price_per_liter_sek: number;
 };
 
+export type PriceDataStatus = "supabase" | "fallback";
+
+export type BeerPriceListResult = {
+  prices: BeerPriceListItem[];
+  status: PriceDataStatus;
+};
+
 type BeerPriceWithVenueRow = BeerPrice & {
   venues: Venue | Venue[] | null;
 };
@@ -18,9 +25,18 @@ type SubmitPriceReportResult = {
 };
 
 function withCalculatedPrice(price: BeerPrice): BeerPrice & { price_per_liter_sek: number } {
+  const priceSek = Number(price.price_sek);
+  const volumeCl = Number(price.volume_cl);
+  const storedPricePerLiter = price.price_per_liter_sek == null ? null : Number(price.price_per_liter_sek);
+
   return {
     ...price,
-    price_per_liter_sek: price.price_per_liter_sek ?? calculatePricePerLiter(price.price_sek, price.volume_cl),
+    price_sek: priceSek,
+    volume_cl: volumeCl,
+    price_per_liter_sek:
+      storedPricePerLiter != null && Number.isFinite(storedPricePerLiter)
+        ? storedPricePerLiter
+        : calculatePricePerLiter(priceSek, volumeCl),
   };
 }
 
@@ -67,9 +83,12 @@ export async function getVenues(): Promise<Venue[]> {
   return data as Venue[];
 }
 
-export async function getBeerPrices(): Promise<BeerPriceListItem[]> {
+export async function getBeerPriceList(): Promise<BeerPriceListResult> {
   if (!isSupabaseConfigured || !supabase) {
-    return fallbackListItems();
+    return {
+      prices: fallbackListItems(),
+      status: "fallback",
+    };
   }
 
   const { data, error } = await supabase
@@ -104,10 +123,13 @@ export async function getBeerPrices(): Promise<BeerPriceListItem[]> {
 
   if (error || !data) {
     console.warn("Using fallback prices because Supabase prices could not be loaded.");
-    return fallbackListItems();
+    return {
+      prices: fallbackListItems(),
+      status: "fallback",
+    };
   }
 
-  return (data as unknown as BeerPriceWithVenueRow[])
+  const prices = (data as unknown as BeerPriceWithVenueRow[])
     .map((price) => {
       const { venues, ...beerPrice } = price;
       const venue = normalizeJoinedVenue(venues);
@@ -123,6 +145,16 @@ export async function getBeerPrices(): Promise<BeerPriceListItem[]> {
     })
     .filter((price): price is BeerPriceListItem => price !== null)
     .sort((a, b) => a.price_per_liter_sek - b.price_per_liter_sek);
+
+  return {
+    prices,
+    status: "supabase",
+  };
+}
+
+export async function getBeerPrices(): Promise<BeerPriceListItem[]> {
+  const result = await getBeerPriceList();
+  return result.prices;
 }
 
 export async function submitPriceReport(report: NewPriceReport): Promise<SubmitPriceReportResult> {
@@ -132,10 +164,10 @@ export async function submitPriceReport(report: NewPriceReport): Promise<SubmitP
 
   const { error } = await supabase.from("price_reports").insert({
     venue_id: report.venue_id || null,
-    venue_name: report.venue_name,
-    beer_name: report.beer_name,
-    volume_cl: report.volume_cl,
-    price_sek: report.price_sek,
+    venue_name: report.venue_name.trim(),
+    beer_name: report.beer_name.trim(),
+    volume_cl: Number(report.volume_cl),
+    price_sek: Number(report.price_sek),
     price_type: report.price_type,
     observed_at: report.observed_at || null,
     reporter_note: report.reporter_note || null,
