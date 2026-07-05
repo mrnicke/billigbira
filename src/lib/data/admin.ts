@@ -30,6 +30,19 @@ function friendlyAdminError() {
   return "Adminflödet kunde inte nå databasen just nu.";
 }
 
+function logAdminError(action: string, error: { code?: string; message?: string; status?: number } | null) {
+  if (!error) {
+    return;
+  }
+
+  console.error("Admin request failed", {
+    action,
+    code: error.code,
+    message: error.message,
+    status: error.status,
+  });
+}
+
 function normalizeReport(report: PriceReport): AdminPriceReport {
   const priceSek = Number(report.price_sek);
   const volumeCl = Number(report.volume_cl);
@@ -113,6 +126,7 @@ export async function getCurrentAdminAccess(): Promise<boolean> {
   const { data, error } = await client.rpc("is_current_user_admin");
 
   if (error) {
+    logAdminError("is_current_user_admin", error);
     return false;
   }
 
@@ -165,6 +179,8 @@ export async function getPendingReports(): Promise<PendingReportsResult> {
     .order("created_at", { ascending: true });
 
   if (error || !data) {
+    logAdminError("get_pending_reports", error);
+
     return {
       ok: false,
       reports: [],
@@ -188,6 +204,8 @@ export async function approveReport(reportId: string): Promise<AdminActionResult
   const { error } = await client.rpc("approve_price_report", { report_id: reportId });
 
   if (error) {
+    logAdminError("approve_price_report", error);
+
     return {
       ok: false,
       message: "Rapporten kunde inte godkännas. Kontrollera att SQL-filen är körd och att kontot är admin.",
@@ -210,6 +228,8 @@ export async function rejectReport(reportId: string, reason?: string): Promise<A
   });
 
   if (error) {
+    logAdminError("reject_price_report", error);
+
     return {
       ok: false,
       message: "Rapporten kunde inte avvisas. Kontrollera att SQL-filen är körd och att kontot är admin.",

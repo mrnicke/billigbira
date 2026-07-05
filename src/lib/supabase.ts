@@ -10,7 +10,13 @@ function createSupabaseBrowserClient(): SupabaseClient | null {
 
   try {
     new URL(supabaseUrl);
-    return createClient(supabaseUrl, supabaseAnonKey);
+    return createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          apikey: supabaseAnonKey,
+        },
+      },
+    });
   } catch {
     console.warn("Supabase public configuration is invalid. Falling back to local data.");
     return null;
