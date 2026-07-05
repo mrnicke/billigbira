@@ -5,6 +5,7 @@ import ReportPriceForm from "../components/ReportPriceForm";
 import { getBeerPriceList } from "../lib/data/prices";
 
 const baseUrl = import.meta.env.BASE_URL;
+const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 const beerPriceList = await getBeerPriceList();
 ---
 
@@ -32,7 +33,7 @@ const beerPriceList = await getBeerPriceList();
 
         <div class="relative min-h-[320px] overflow-hidden rounded-lg border border-black/10 bg-white shadow-soft">
           <img
-            src={`${baseUrl}hero-billig-bira.svg`}
+            src={`${normalizedBaseUrl}hero-billig-bira.svg`}
             alt="Illustration av Norrköping, pubbord och ölglas"
             class="h-full min-h-[320px] w-full object-cover"
             loading="eager"
