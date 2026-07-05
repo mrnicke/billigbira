@@ -1,0 +1,67 @@
+---
+import PageShell from "../components/PageShell.astro";
+import PriceList from "../components/PriceList";
+import ReportPriceForm from "../components/ReportPriceForm";
+import { beerPrices } from "../data/beerPrices";
+
+const baseUrl = import.meta.env.BASE_URL;
+---
+
+<PageShell
+  title="Billig Bira | Billig öl i Norrköping"
+  description="Billig Bira är en svensk webbapp för att snabbt hitta billig öl i Norrköping."
+>
+  <main>
+    <section class="bg-foam px-4 py-10 sm:px-6 sm:py-14 lg:px-8">
+      <div class="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1fr_0.95fr] lg:items-center">
+        <div class="max-w-2xl">
+          <p class="text-sm font-bold uppercase tracking-normal text-copper">Norrköping</p>
+          <h1 class="mt-3 text-5xl font-black leading-tight text-ink sm:text-6xl lg:text-7xl">Billig Bira</h1>
+          <p class="mt-5 text-xl leading-8 text-ink/75">
+            Hitta lägsta literpriset på öl i stan, jämför pris per cl och se om priset är normalpris, after work, happy hour eller studentpris.
+          </p>
+          <div class="mt-7 flex flex-col gap-3 sm:flex-row">
+            <a href="#priser" class="rounded-md bg-hop px-5 py-3 text-center font-black text-white hover:bg-ink">Visa priser</a>
+            <a href="#rapportera" class="rounded-md border border-black/15 bg-white px-5 py-3 text-center font-black text-ink hover:border-hop hover:text-hop">Rapportera pris</a>
+          </div>
+          <p class="mt-6 max-w-xl text-sm leading-6 text-ink/60">
+            Första MVP:n använder fiktiv mockdata. Den är byggd för att senare kopplas till Supabase med publik läsning, rapportering och adminmoderering.
+          </p>
+        </div>
+
+        <div class="relative min-h-[320px] overflow-hidden rounded-lg border border-black/10 bg-white shadow-soft">
+          <img
+            src={`${baseUrl}hero-billig-bira.svg`}
+            alt="Illustration av Norrköping, pubbord och ölglas"
+            class="h-full min-h-[320px] w-full object-cover"
+            loading="eager"
+          />
+          <div class="absolute bottom-0 left-0 right-0 bg-night/85 p-4 text-white">
+            <p class="text-sm font-bold text-white/70">Exempel</p>
+            <p class="mt-1 text-2xl font-black">69 kr för 40 cl = 172,50 kr/liter</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-night px-4 py-6 text-white sm:px-6 lg:px-8">
+      <div class="mx-auto grid max-w-6xl gap-4 text-sm sm:grid-cols-3">
+        <div>
+          <p class="font-black text-malt">Snabb jämförelse</p>
+          <p class="mt-1 text-white/70">Sortera efter billigast literpris direkt.</p>
+        </div>
+        <div>
+          <p class="font-black text-malt">Mobil först</p>
+          <p class="mt-1 text-white/70">Kort på mobilen, tabell på desktop.</p>
+        </div>
+        <div>
+          <p class="font-black text-malt">Redo för Supabase</p>
+          <p class="mt-1 text-white/70">Frontend bygger utan riktiga nycklar.</p>
+        </div>
+      </div>
+    </section>
+
+    <PriceList prices={beerPrices} client:load />
+    <ReportPriceForm client:load />
+  </main>
+</PageShell>
