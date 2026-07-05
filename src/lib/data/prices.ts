@@ -1,11 +1,9 @@
-import { calculatePricePerLiter } from "../pricing";
 import { isSupabaseConfigured, supabase } from "../supabase";
 import type { BeerCatalogItem, BeerPrice, NewPriceReport, Venue } from "../types";
 
 export type BeerPriceListItem = BeerPrice & {
   venue: Venue;
   beer: BeerCatalogItem | null;
-  price_per_liter_sek: number;
 };
 
 export type PriceDataStatus = "supabase" | "empty";
@@ -25,22 +23,6 @@ type SubmitPriceReportResult = {
   persisted: boolean;
 };
 
-function withCalculatedPrice(price: BeerPrice): BeerPrice & { price_per_liter_sek: number } {
-  const priceSek = Number(price.price_sek);
-  const volumeCl = Number(price.volume_cl);
-  const storedPricePerLiter = price.price_per_liter_sek == null ? null : Number(price.price_per_liter_sek);
-
-  return {
-    ...price,
-    price_sek: priceSek,
-    volume_cl: volumeCl,
-    price_per_liter_sek:
-      storedPricePerLiter != null && Number.isFinite(storedPricePerLiter)
-        ? storedPricePerLiter
-        : calculatePricePerLiter(priceSek, volumeCl),
-  };
-}
-
 function normalizeJoinedVenue(venue: Venue | Venue[] | null): Venue | null {
   if (Array.isArray(venue)) {
     return venue[0] ?? null;
@@ -55,6 +37,26 @@ function normalizeJoinedBeer(beer: BeerCatalogItem | BeerCatalogItem[] | null | 
   }
 
   return beer ?? null;
+}
+
+function normalizePrice(price: BeerPriceWithVenueRow): BeerPriceListItem | null {
+  const { venues, beer_catalog, ...beerPrice } = price;
+  const venue = normalizeJoinedVenue(venues);
+
+  if (!venue?.is_active) {
+    return null;
+  }
+
+  return {
+    ...beerPrice,
+    price_sek: Number(beerPrice.price_sek),
+    volume_cl: beerPrice.volume_cl == null ? null : Number(beerPrice.volume_cl),
+    volume_is_verified: beerPrice.volume_is_verified === true,
+    admin_verified: beerPrice.admin_verified === true || beerPrice.is_verified === true,
+    is_current_cheapest: beerPrice.is_current_cheapest === true,
+    venue,
+    beer: normalizeJoinedBeer(beer_catalog),
+  };
 }
 
 export async function getVenues(): Promise<Venue[]> {
@@ -84,43 +86,33 @@ export async function getBeerPriceList(): Promise<BeerPriceListResult> {
     };
   }
 
-  const baseSelect = `
+  const { data, error } = await supabase
+    .from("beer_prices")
+    .select(
+      `
         id,
         venue_id,
-        beer_name,
-        volume_cl,
         price_sek,
-        price_per_liter_sek,
-        price_type,
-        observed_at,
-        source,
-        is_verified,
-        is_active,
-        created_at,
-        venues:venue_id (
-          id,
-          name,
-          slug,
-          city,
-          district,
-          address,
-          is_active,
-          created_at
-        )
-      `;
-  const catalogSelect = `
-        id,
-        venue_id,
         beer_id,
         beer_name,
         volume_cl,
-        price_sek,
-        price_per_liter_sek,
+        volume_is_verified,
         price_type,
+        source_type,
+        source_url,
+        status,
+        is_current_cheapest,
+        admin_verified,
+        admin_verified_at,
+        admin_verified_by,
+        approved_at,
+        approved_by,
+        reported_at,
+        reporter_note,
+        admin_note,
         observed_at,
-        source,
-        is_verified,
         is_active,
+        is_verified,
         created_at,
         venues:venue_id (
           id,
@@ -144,28 +136,11 @@ export async function getBeerPriceList(): Promise<BeerPriceListResult> {
           sort_order,
           created_at
         )
-      `;
-
-  const catalogResult = await supabase
-    .from("beer_prices")
-    .select(catalogSelect)
-    .eq("is_verified", true)
-    .eq("is_active", true)
-    .order("price_per_liter_sek", { ascending: true });
-  let data: unknown[] | null = catalogResult.data;
-  let error = catalogResult.error;
-
-  if (error) {
-    const legacyResult = await supabase
-      .from("beer_prices")
-      .select(baseSelect)
-      .eq("is_verified", true)
-      .eq("is_active", true)
-      .order("price_per_liter_sek", { ascending: true });
-
-    data = legacyResult.data;
-    error = legacyResult.error;
-  }
+      `,
+    )
+    .eq("status", "approved")
+    .eq("is_current_cheapest", true)
+    .order("price_sek", { ascending: true });
 
   if (error || !data) {
     console.warn("Prices could not be loaded.");
@@ -176,23 +151,9 @@ export async function getBeerPriceList(): Promise<BeerPriceListResult> {
   }
 
   const prices = (data as unknown as BeerPriceWithVenueRow[])
-    .map((price) => {
-      const { venues, beer_catalog, ...beerPrice } = price;
-      const venue = normalizeJoinedVenue(venues);
-      const beer = normalizeJoinedBeer(beer_catalog);
-
-      if (!venue?.is_active) {
-        return null;
-      }
-
-      return {
-        ...withCalculatedPrice(beerPrice),
-        venue,
-        beer,
-      };
-    })
+    .map(normalizePrice)
     .filter((price): price is BeerPriceListItem => price !== null)
-    .sort((a, b) => a.price_per_liter_sek - b.price_per_liter_sek);
+    .sort((a, b) => a.price_sek - b.price_sek || a.venue.name.localeCompare(b.venue.name, "sv"));
 
   return {
     prices,
@@ -213,13 +174,16 @@ export async function submitPriceReport(report: NewPriceReport): Promise<SubmitP
   const { error } = await supabase.from("price_reports").insert({
     venue_id: report.venue_id || null,
     venue_name: report.venue_name.trim(),
-    beer_id: report.beer_id || null,
-    beer_name: report.beer_name.trim(),
-    volume_cl: Number(report.volume_cl),
     price_sek: Number(report.price_sek),
+    beer_id: report.beer_id || null,
+    beer_name: report.beer_name?.trim() || null,
+    volume_cl: report.volume_cl == null ? null : Number(report.volume_cl),
+    volume_is_verified: report.volume_is_verified === true,
     price_type: report.price_type,
+    source_type: report.source_type,
+    source_url: report.source_url?.trim() || null,
     observed_at: report.observed_at || null,
-    reporter_note: report.reporter_note || null,
+    reporter_note: report.reporter_note?.trim() || null,
   });
 
   return {

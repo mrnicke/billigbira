@@ -1,10 +1,8 @@
 import type { User } from "@supabase/supabase-js";
-import { calculatePricePerLiter } from "../pricing";
 import { isSupabaseConfigured, supabase } from "../supabase";
-import type { BeerCatalogItem, BeerPrice, PriceReport, PriceType, ReportStatus, Venue } from "../types";
+import type { BeerCatalogItem, BeerPrice, BeerPriceType, PriceReport, ReportStatus, Venue } from "../types";
 
 export type AdminPriceReport = PriceReport & {
-  price_per_liter_sek: number;
   venue: { id: string; name: string } | null;
   beer: BeerCatalogItem | null;
 };
@@ -14,19 +12,22 @@ export type AdminReportStatusFilter = ReportStatus | "all";
 export type AdminReportOverrides = {
   venue_id: string | null;
   venue_name: string;
-  beer_id: string | null;
-  beer_name: string;
-  volume_cl: number;
   price_sek: number;
-  price_type: PriceType;
+  beer_id: string | null;
+  beer_name: string | null;
+  volume_cl: number | null;
+  volume_is_verified: boolean;
+  price_type: BeerPriceType;
+  source_type: "website" | "menu" | "reported";
+  source_url: string | null;
   observed_at: string | null;
   reporter_note: string | null;
+  admin_note: string | null;
 };
 
 export type AdminBeerPrice = BeerPrice & {
   venue: Venue;
   beer: BeerCatalogItem | null;
-  price_per_liter_sek: number;
 };
 
 type AdminActionResult = {
@@ -72,6 +73,7 @@ const emptyReportStatusCounts: Record<ReportStatus, number> = {
   pending: 0,
   approved: 0,
   rejected: 0,
+  archived: 0,
 };
 
 function ensureSupabase() {
@@ -124,24 +126,19 @@ function normalizeJoinedBeer(beer: BeerCatalogItem | BeerCatalogItem[] | null | 
 }
 
 function normalizeReport(report: PriceReportWithVenueRow): AdminPriceReport {
-  const priceSek = Number(report.price_sek);
-  const volumeCl = Number(report.volume_cl);
   const { venues, beer_catalog, ...priceReport } = report;
 
   return {
     ...priceReport,
-    price_sek: priceSek,
-    volume_cl: volumeCl,
-    price_per_liter_sek: calculatePricePerLiter(priceSek, volumeCl),
+    price_sek: Number(report.price_sek),
+    volume_cl: report.volume_cl == null ? null : Number(report.volume_cl),
+    volume_is_verified: report.volume_is_verified === true,
     venue: normalizeJoinedVenue(venues),
     beer: normalizeJoinedBeer(beer_catalog),
   };
 }
 
 function normalizeAdminBeerPrice(price: BeerPriceWithVenueRow): AdminBeerPrice | null {
-  const priceSek = Number(price.price_sek);
-  const volumeCl = Number(price.volume_cl);
-  const storedPricePerLiter = price.price_per_liter_sek == null ? null : Number(price.price_per_liter_sek);
   const { venues, beer_catalog, ...beerPrice } = price;
   const venue = normalizeJoinedAdminVenue(venues);
 
@@ -151,13 +148,11 @@ function normalizeAdminBeerPrice(price: BeerPriceWithVenueRow): AdminBeerPrice |
 
   return {
     ...beerPrice,
-    price_sek: priceSek,
-    volume_cl: volumeCl,
-    price_per_liter_sek:
-      storedPricePerLiter != null && Number.isFinite(storedPricePerLiter)
-        ? storedPricePerLiter
-        : calculatePricePerLiter(priceSek, volumeCl),
-    is_active: beerPrice.is_active ?? true,
+    price_sek: Number(price.price_sek),
+    volume_cl: price.volume_cl == null ? null : Number(price.volume_cl),
+    volume_is_verified: price.volume_is_verified === true,
+    admin_verified: price.admin_verified === true || price.is_verified === true,
+    is_current_cheapest: price.is_current_cheapest === true,
     venue,
     beer: normalizeJoinedBeer(beer_catalog),
   };
@@ -320,7 +315,9 @@ export async function getReportStatusCounts(): Promise<ReportStatusCountsResult>
   const counts = { ...emptyReportStatusCounts };
 
   for (const report of data as Pick<PriceReport, "status">[]) {
-    counts[report.status] += 1;
+    if (report.status in counts) {
+      counts[report.status] += 1;
+    }
   }
 
   return {
@@ -357,18 +354,24 @@ export async function getReportsByStatus(status: AdminReportStatusFilter = "pend
         id,
         venue_id,
         venue_name,
+        price_sek,
         beer_id,
         beer_name,
         volume_cl,
-        price_sek,
+        volume_is_verified,
         price_type,
+        source_type,
+        source_url,
         observed_at,
         reporter_note,
+        admin_note,
         status,
         reviewed_at,
         reviewed_by,
         rejection_reason,
         approved_price_id,
+        approved_at,
+        approved_by,
         created_at,
         venues:venue_id (
           id,
@@ -416,7 +419,7 @@ export async function getPendingReports(): Promise<ReportsResult> {
   return getReportsByStatus("pending");
 }
 
-export async function approveReport(reportId: string, overrides: AdminReportOverrides): Promise<AdminActionResult> {
+export async function approveReport(reportId: string, overrides: AdminReportOverrides, verifyAdmin: boolean): Promise<AdminActionResult> {
   const client = ensureSupabase();
 
   if (!client) {
@@ -427,13 +430,18 @@ export async function approveReport(reportId: string, overrides: AdminReportOver
     report_id: reportId,
     override_venue_id: overrides.venue_id,
     override_venue_name: overrides.venue_name.trim(),
-    override_beer_name: overrides.beer_name.trim(),
-    override_beer_id: overrides.beer_id,
-    override_volume_cl: Number(overrides.volume_cl),
     override_price_sek: Number(overrides.price_sek),
     override_price_type: overrides.price_type,
+    override_source_type: overrides.source_type,
+    override_source_url: overrides.source_url?.trim() || null,
+    override_beer_id: overrides.beer_id,
+    override_beer_name: overrides.beer_name?.trim() || null,
+    override_volume_cl: overrides.volume_cl == null ? null : Number(overrides.volume_cl),
+    override_volume_is_verified: overrides.volume_is_verified,
     override_observed_at: overrides.observed_at || null,
-    override_reporter_note: overrides.reporter_note?.trim() ?? "",
+    override_reporter_note: overrides.reporter_note?.trim() || null,
+    override_admin_note: overrides.admin_note?.trim() || null,
+    verify_admin: verifyAdmin,
   });
 
   if (error) {
@@ -441,7 +449,7 @@ export async function approveReport(reportId: string, overrides: AdminReportOver
 
     return {
       ok: false,
-      message: "Rapporten kunde inte godkännas. Kontrollera att SQL-filen är körd och att kontot är admin.",
+      message: "Rapporten kunde inte godkännas. Kontrollera att MVP-SQL är körd och att kontot är admin.",
     };
   }
 
@@ -465,7 +473,7 @@ export async function rejectReport(reportId: string, reason?: string): Promise<A
 
     return {
       ok: false,
-      message: "Rapporten kunde inte avvisas. Kontrollera att SQL-filen är körd och att kontot är admin.",
+      message: "Rapporten kunde inte avvisas. Kontrollera att MVP-SQL är körd och att kontot är admin.",
     };
   }
 
@@ -499,16 +507,27 @@ export async function getAdminBeerPrices(): Promise<AdminBeerPricesResult> {
       `
         id,
         venue_id,
+        price_sek,
         beer_id,
         beer_name,
         volume_cl,
-        price_sek,
-        price_per_liter_sek,
+        volume_is_verified,
         price_type,
+        source_type,
+        source_url,
+        status,
+        is_current_cheapest,
+        admin_verified,
+        admin_verified_at,
+        admin_verified_by,
+        approved_at,
+        approved_by,
+        reported_at,
+        reporter_note,
+        admin_note,
         observed_at,
-        source,
-        is_verified,
         is_active,
+        is_verified,
         created_at,
         venues:venue_id (
           id,
@@ -555,31 +574,51 @@ export async function getAdminBeerPrices(): Promise<AdminBeerPricesResult> {
   };
 }
 
-async function setBeerPriceActive(priceId: string, isActive: boolean): Promise<AdminActionResult> {
+export async function markBeerPriceVerified(priceId: string): Promise<AdminActionResult> {
   const client = ensureSupabase();
 
   if (!client) {
     return { ok: false, message: "Supabase är inte konfigurerat för den här builden." };
   }
 
-  const { error } = await client.from("beer_prices").update({ is_active: isActive }).eq("id", priceId);
+  const { error } = await client.rpc("mark_beer_price_admin_verified", {
+    price_id: priceId,
+  });
 
   if (error) {
-    logAdminError(isActive ? "reactivate_beer_price" : "deactivate_beer_price", error);
+    logAdminError("mark_beer_price_admin_verified", error);
 
     return {
       ok: false,
-      message: "Priset kunde inte uppdateras. Kontrollera att SQL-filen är körd och att kontot är admin.",
+      message: "Priset kunde inte markeras som verifierat.",
     };
   }
 
   return { ok: true };
 }
 
-export async function deactivateBeerPrice(priceId: string): Promise<AdminActionResult> {
-  return setBeerPriceActive(priceId, false);
+export async function archiveBeerPrice(priceId: string): Promise<AdminActionResult> {
+  const client = ensureSupabase();
+
+  if (!client) {
+    return { ok: false, message: "Supabase är inte konfigurerat för den här builden." };
+  }
+
+  const { error } = await client.rpc("archive_beer_price", {
+    price_id: priceId,
+  });
+
+  if (error) {
+    logAdminError("archive_beer_price", error);
+
+    return {
+      ok: false,
+      message: "Priset kunde inte arkiveras.",
+    };
+  }
+
+  return { ok: true };
 }
 
-export async function reactivateBeerPrice(priceId: string): Promise<AdminActionResult> {
-  return setBeerPriceActive(priceId, true);
-}
+export const deactivateBeerPrice = archiveBeerPrice;
+export const reactivateBeerPrice = markBeerPriceVerified;

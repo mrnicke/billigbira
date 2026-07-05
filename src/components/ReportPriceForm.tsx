@@ -1,42 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import { beerStyleLabels, getActiveBeers } from "../lib/data/beers";
 import { getVenues, submitPriceReport } from "../lib/data/prices";
-import { calculatePricePerLiter, formatPricePerLiter } from "../lib/pricing";
-import type { BeerCatalogItem, PriceType, Venue } from "../lib/types";
+import { PRICE_TYPE_LABELS, SOURCE_TYPE_LABELS, type BeerCatalogItem, type BeerPriceSourceType, type BeerPriceType, type Venue } from "../lib/types";
 
 type SubmitState = "idle" | "submitting" | "saved" | "preview" | "error";
 type VenueMode = "existing" | "new";
-type BeerMode = "catalog" | "other";
 
-const validPriceTypes: PriceType[] = ["normalpris", "after_work", "happy_hour", "student", "okänd"];
-
-const priceTypeLabels: Record<PriceType, string> = {
-  normalpris: "Normalpris",
-  after_work: "AW",
-  happy_hour: "Happy hour",
-  student: "Student",
-  okänd: "Okänd",
-};
+const validPriceTypes: BeerPriceType[] = ["regular", "after_work", "campaign", "unknown"];
+const validSourceTypes: BeerPriceSourceType[] = ["reported", "menu", "website"];
 
 const inputClass =
   "min-h-[3.25rem] w-full min-w-0 rounded-2xl border border-white/10 bg-white/[0.08] px-4 py-3 font-bold text-foam outline-none placeholder:text-foam/30 focus:border-malt focus:ring-2 focus:ring-malt/20";
 const labelClass = "grid min-w-0 gap-2 text-sm font-black text-foam";
-const otherBeerOptionValue = "__other__";
-const nonBeerTerms = ["cider", "vin", "drink", "cocktail", "shot", "spritz"];
 
 function parsePositiveDecimal(value: string): number | null {
-  const parsed = Number(value.replace(",", "."));
+  const trimmed = value.trim();
 
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed.replace(",", "."));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function isValidPriceType(value: string): value is PriceType {
-  return validPriceTypes.includes(value as PriceType);
+function isValidPriceType(value: string): value is BeerPriceType {
+  return validPriceTypes.includes(value as BeerPriceType);
 }
 
-function looksLikeNonBeer(value: string) {
-  const normalized = value.trim().toLocaleLowerCase("sv");
-  return nonBeerTerms.some((term) => normalized.includes(term));
+function isValidSourceType(value: string): value is BeerPriceSourceType {
+  return validSourceTypes.includes(value as BeerPriceSourceType);
 }
 
 function messageClass(state: SubmitState) {
@@ -62,11 +55,13 @@ function StepLabel({ number, title }: { number: string; title: string }) {
 
 export default function ReportPriceForm() {
   const [priceSek, setPriceSek] = useState("");
-  const [volumeCl, setVolumeCl] = useState("40");
+  const [volumeCl, setVolumeCl] = useState("");
+  const [volumeIsVerified, setVolumeIsVerified] = useState(false);
   const [beerName, setBeerName] = useState("");
-  const [beerMode, setBeerMode] = useState<BeerMode>("catalog");
   const [selectedBeerId, setSelectedBeerId] = useState("");
-  const [priceType, setPriceType] = useState<PriceType>("normalpris");
+  const [priceType, setPriceType] = useState<BeerPriceType>("unknown");
+  const [sourceType, setSourceType] = useState<BeerPriceSourceType>("reported");
+  const [sourceUrl, setSourceUrl] = useState("");
   const [comment, setComment] = useState("");
   const [newVenueName, setNewVenueName] = useState("");
   const [venueMode, setVenueMode] = useState<VenueMode>("existing");
@@ -119,25 +114,14 @@ export default function ReportPriceForm() {
 
     getActiveBeers()
       .then((loadedBeers) => {
-        if (!isMounted) {
-          return;
-        }
-
-        setBeers(loadedBeers);
-        setSelectedBeerId((currentBeerId) => currentBeerId || loadedBeers[0]?.id || "");
-
-        if (loadedBeers.length === 0) {
-          setBeerMode("other");
+        if (isMounted) {
+          setBeers(loadedBeers);
         }
       })
       .catch(() => {
-        if (!isMounted) {
-          return;
+        if (isMounted && import.meta.env.DEV) {
+          console.info("Billig Bira: ölkatalogen kunde inte hämtas, rapportering fungerar ändå.");
         }
-
-        setBeerMode("other");
-        setMessage("Kunde inte hämta ölkatalogen. Skriv ölnamnet själv.");
-        setSubmitState("error");
       })
       .finally(() => {
         if (isMounted) {
@@ -150,19 +134,9 @@ export default function ReportPriceForm() {
     };
   }, []);
 
-  const calculatedPrice = useMemo(() => {
-    const price = parsePositiveDecimal(priceSek);
-    const volume = parsePositiveDecimal(volumeCl);
-
-    if (price == null || volume == null) {
-      return null;
-    }
-
-    return formatPricePerLiter(calculatePricePerLiter(price, volume));
-  }, [priceSek, volumeCl]);
-
   const selectedVenue = venues.find((venue) => venue.id === selectedVenueId) ?? null;
   const selectedBeer = beers.find((beer) => beer.id === selectedBeerId) ?? null;
+  const parsedPrice = useMemo(() => parsePositiveDecimal(priceSek), [priceSek]);
   const isSubmitting = submitState === "submitting";
   const canShowSuccess = submitState === "saved" || submitState === "preview";
 
@@ -173,11 +147,11 @@ export default function ReportPriceForm() {
           <div>
             <p className="text-sm font-black uppercase tracking-normal text-malt">Rapportera pris</p>
             <h2 className="mt-1 text-3xl font-black text-foam">Ser du ett bättre pris?</h2>
-            <p className="mt-2 max-w-sm text-sm font-semibold leading-6 text-foam/60">Skicka in det på 20 sekunder. Admin granskar innan det syns.</p>
+            <p className="mt-2 max-w-sm text-sm font-semibold leading-6 text-foam/60">Ställe och pris räcker. Resten kan admin fylla i senare.</p>
           </div>
           <div className="hidden rounded-3xl bg-night/50 px-4 py-3 text-right ring-1 ring-white/10 sm:block">
-            <p className="text-xs font-black uppercase text-foam/40">Kr/liter</p>
-            <p className="mt-1 text-xl font-black text-lager">{calculatedPrice ?? "Fyll i"}</p>
+            <p className="text-xs font-black uppercase text-foam/40">Pris</p>
+            <p className="mt-1 text-xl font-black text-lager">{parsedPrice == null ? "Fyll i" : `${parsedPrice} kr`}</p>
           </div>
         </div>
 
@@ -191,7 +165,6 @@ export default function ReportPriceForm() {
             const price = parsePositiveDecimal(priceSek);
             const volume = parsePositiveDecimal(volumeCl);
             const venueName = newVenueName.trim();
-            const customBeerName = beerName.trim();
 
             if (venueMode === "existing" && !selectedVenue) {
               setMessage("Välj ställe eller lägg till ett nytt.");
@@ -205,32 +178,14 @@ export default function ReportPriceForm() {
               return;
             }
 
-            if (beerMode === "catalog" && !selectedBeer) {
-              setMessage("Välj öl eller välj Annan öl.");
-              setSubmitState("error");
-              return;
-            }
-
-            if (beerMode === "other" && !customBeerName) {
-              setMessage("Skriv ölnamnet.");
-              setSubmitState("error");
-              return;
-            }
-
-            if (beerMode === "other" && looksLikeNonBeer(customBeerName)) {
-              setMessage("Rapportera bara öl i den här vyn.");
-              setSubmitState("error");
-              return;
-            }
-
             if (price == null) {
               setMessage("Priset måste vara större än 0.");
               setSubmitState("error");
               return;
             }
 
-            if (volume == null) {
-              setMessage("Volymen måste vara större än 0.");
+            if (volumeCl.trim() && volume == null) {
+              setMessage("Volymen måste vara större än 0 om du anger den.");
               setSubmitState("error");
               return;
             }
@@ -241,15 +196,24 @@ export default function ReportPriceForm() {
               return;
             }
 
+            if (!isValidSourceType(sourceType)) {
+              setMessage("Välj en giltig källa.");
+              setSubmitState("error");
+              return;
+            }
+
             try {
               const result = await submitPriceReport({
                 venue_id: venueMode === "existing" ? selectedVenue?.id ?? null : null,
                 venue_name: venueMode === "existing" ? selectedVenue?.name ?? "" : venueName,
-                beer_id: beerMode === "catalog" ? selectedBeer?.id ?? null : null,
-                beer_name: beerMode === "catalog" ? selectedBeer?.name ?? "" : customBeerName,
-                volume_cl: volume,
                 price_sek: price,
+                beer_id: selectedBeer?.id ?? null,
+                beer_name: selectedBeer?.name || beerName.trim() || null,
+                volume_cl: volume,
+                volume_is_verified: volume != null && volumeIsVerified,
                 price_type: priceType,
+                source_type: sourceType,
+                source_url: sourceUrl.trim() || null,
                 observed_at: new Date().toISOString().slice(0, 10),
                 reporter_note: comment.trim() || null,
               });
@@ -265,7 +229,11 @@ export default function ReportPriceForm() {
 
               if (result.ok) {
                 setBeerName("");
+                setSelectedBeerId("");
                 setPriceSek("");
+                setVolumeCl("");
+                setVolumeIsVerified(false);
+                setSourceUrl("");
                 setComment("");
                 setNewVenueName("");
               }
@@ -276,7 +244,7 @@ export default function ReportPriceForm() {
           }}
         >
           <div className="min-w-0 rounded-3xl bg-night/45 p-4 ring-1 ring-white/10">
-            <StepLabel number="1" title="Var såg du priset?" />
+            <StepLabel number="1" title="Ställe och pris" />
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 className={`min-h-12 rounded-2xl px-3 text-sm font-black ${
@@ -299,7 +267,7 @@ export default function ReportPriceForm() {
               </button>
             </div>
 
-            <div className="mt-3">
+            <div className="mt-3 grid gap-3">
               {venueMode === "existing" ? (
                 <label className={labelClass}>
                   Ställe
@@ -325,78 +293,72 @@ export default function ReportPriceForm() {
                   <input className={inputClass} value={newVenueName} onChange={(event) => setNewVenueName(event.target.value)} placeholder="Exempelbaren" required />
                 </label>
               )}
-            </div>
-          </div>
-
-          <div className="min-w-0 rounded-3xl bg-night/45 p-4 ring-1 ring-white/10">
-            <StepLabel number="2" title="Vad kostade det?" />
-            <div className="mt-4 grid min-w-0 grid-cols-2 gap-3">
               <label className={labelClass}>
                 Pris
-                <input className={inputClass} inputMode="decimal" value={priceSek} onChange={(event) => setPriceSek(event.target.value)} placeholder="69" required />
+                <input className={inputClass} inputMode="decimal" value={priceSek} onChange={(event) => setPriceSek(event.target.value)} placeholder="52" required />
               </label>
-              <label className={labelClass}>
-                Volym
-                <input className={inputClass} inputMode="decimal" value={volumeCl} onChange={(event) => setVolumeCl(event.target.value)} placeholder="40" required />
-              </label>
-            </div>
-            <div className="mt-3 min-w-0 rounded-2xl bg-white/[0.08] px-4 py-3 ring-1 ring-white/10">
-              <p className="text-xs font-black uppercase text-foam/40">Kr/liter</p>
-              <p className="mt-1 text-2xl font-black text-lager">{calculatedPrice ?? "Fyll i pris och volym"}</p>
             </div>
           </div>
 
           <div className="min-w-0 rounded-3xl bg-night/45 p-4 ring-1 ring-white/10">
-            <StepLabel number="3" title="Vilken bira?" />
+            <StepLabel number="2" title="Valfritt" />
             <div className="mt-4 grid gap-3">
               <label className={labelClass}>
-                Välj öl
-                <select
-                  className={inputClass}
-                  value={beerMode === "other" ? otherBeerOptionValue : selectedBeerId}
-                  onChange={(event) => {
-                    if (event.target.value === otherBeerOptionValue) {
-                      setBeerMode("other");
-                      setSelectedBeerId("");
-                      return;
-                    }
-
-                    setBeerMode("catalog");
-                    setSelectedBeerId(event.target.value);
-                  }}
-                  disabled={isLoadingBeers}
-                  required
-                >
-                  {isLoadingBeers && <option value="">Laddar öl...</option>}
-                  {!isLoadingBeers && beers.length === 0 && <option value="">Inga öl hittades</option>}
+                Katalogöl
+                <select className={inputClass} value={selectedBeerId} onChange={(event) => setSelectedBeerId(event.target.value)} disabled={isLoadingBeers}>
+                  <option value="">Ingen katalogkoppling</option>
                   {beers.map((beer) => (
                     <option key={beer.id} value={beer.id}>
                       {beer.name} · {beerStyleLabels[beer.style]}
                     </option>
                   ))}
-                  <option value={otherBeerOptionValue}>Annan öl</option>
                 </select>
               </label>
-              {beerMode === "other" && (
+              {!selectedBeer && (
                 <label className={labelClass}>
-                  Ölnamn
-                  <input className={inputClass} value={beerName} onChange={(event) => setBeerName(event.target.value)} placeholder="Skriv ölnamn" required />
+                  Öltyp eller namn
+                  <input className={inputClass} value={beerName} onChange={(event) => setBeerName(event.target.value)} placeholder="Till exempel stor stark" />
                 </label>
               )}
-              {beerMode === "catalog" && selectedBeer && (
-                <p className="rounded-2xl bg-white/[0.07] px-4 py-3 text-sm font-bold text-foam/65">
-                  {beerStyleLabels[selectedBeer.style]} {selectedBeer.is_generic ? "· generiskt val" : selectedBeer.brewery ? `· ${selectedBeer.brewery}` : ""}
-                </p>
-              )}
+              <div className="grid grid-cols-2 gap-3">
+                <label className={labelClass}>
+                  Volym
+                  <input className={inputClass} inputMode="decimal" value={volumeCl} onChange={(event) => setVolumeCl(event.target.value)} placeholder="40" />
+                </label>
+                <label className="flex min-h-[3.25rem] items-center gap-3 self-end rounded-2xl bg-white/[0.08] px-4 text-sm font-bold text-foam/75 ring-1 ring-white/10">
+                  <input
+                    className="size-4 accent-malt"
+                    type="checkbox"
+                    checked={volumeIsVerified}
+                    onChange={(event) => setVolumeIsVerified(event.target.checked)}
+                    disabled={!volumeCl.trim()}
+                  />
+                  Verifierad volym
+                </label>
+              </div>
               <label className={labelClass}>
                 Pristyp
-                <select className={inputClass} value={priceType} onChange={(event) => setPriceType(event.target.value as PriceType)}>
+                <select className={inputClass} value={priceType} onChange={(event) => setPriceType(event.target.value as BeerPriceType)}>
                   {validPriceTypes.map((type) => (
                     <option key={type} value={type}>
-                      {priceTypeLabels[type]}
+                      {PRICE_TYPE_LABELS[type]}
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className={labelClass}>
+                Källa
+                <select className={inputClass} value={sourceType} onChange={(event) => setSourceType(event.target.value as BeerPriceSourceType)}>
+                  {validSourceTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {SOURCE_TYPE_LABELS[type]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={labelClass}>
+                Länk
+                <input className={inputClass} inputMode="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://..." />
               </label>
               <label className={labelClass}>
                 Kommentar

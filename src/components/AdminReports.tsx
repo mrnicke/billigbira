@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState, type ComponentProps } from "react";
 import { beerStyleLabels, getActiveBeers } from "../lib/data/beers";
 import {
   approveReport,
-  deactivateBeerPrice,
+  archiveBeerPrice,
   getAdminBeerPrices,
   getAdminVenues,
   getCurrentUser,
   getReportStatusCounts,
   getReportsByStatus,
+  markBeerPriceVerified,
   onAdminAuthChange,
-  reactivateBeerPrice,
   rejectReport,
   signInAdmin,
   signOutAdmin,
@@ -17,8 +17,16 @@ import {
   type AdminPriceReport,
   type AdminReportStatusFilter,
 } from "../lib/data/admin";
-import { calculatePricePerLiter, formatPricePerLiter, formatSek } from "../lib/pricing";
-import type { BeerCatalogItem, PriceType, ReportStatus, Venue } from "../lib/types";
+import { formatSek } from "../lib/pricing";
+import {
+  PRICE_TYPE_LABELS,
+  SOURCE_TYPE_LABELS,
+  type BeerCatalogItem,
+  type BeerPriceSourceType,
+  type BeerPriceType,
+  type ReportStatus,
+  type Venue,
+} from "../lib/types";
 
 type AuthState = "checking" | "signedOut" | "signedIn";
 type Feedback = {
@@ -27,20 +35,22 @@ type Feedback = {
 };
 type FormSubmitEvent = Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0];
 type VenueMode = "existing" | "new";
-type BeerMode = "catalog" | "free";
 
 type ReportEditState = {
   venueMode: VenueMode;
   venueId: string;
   venueName: string;
-  beerMode: BeerMode;
   beerId: string;
   beerName: string;
   priceSek: string;
   volumeCl: string;
-  priceType: PriceType;
+  volumeIsVerified: boolean;
+  priceType: BeerPriceType;
+  sourceType: BeerPriceSourceType;
+  sourceUrl: string;
   observedAt: string;
   reporterNote: string;
+  adminNote: string;
 };
 
 type RejectState = {
@@ -48,38 +58,37 @@ type RejectState = {
   customReason: string;
 };
 
-const validPriceTypes: PriceType[] = ["normalpris", "after_work", "happy_hour", "student", "okänd"];
-
-const priceTypeLabels: Record<PriceType, string> = {
-  normalpris: "Normalpris",
-  after_work: "After work",
-  happy_hour: "Happy hour",
-  student: "Student",
-  okänd: "Okänd",
-};
+const validPriceTypes: BeerPriceType[] = ["regular", "after_work", "campaign", "unknown"];
+const validSourceTypes: BeerPriceSourceType[] = ["reported", "menu", "website"];
 
 const statusLabels: Record<ReportStatus, string> = {
   pending: "Väntar",
   approved: "Godkänd",
   rejected: "Avvisad",
+  archived: "Arkiverad",
 };
 
-const statusFilters: AdminReportStatusFilter[] = ["pending", "approved", "rejected", "all"];
+const statusFilters: AdminReportStatusFilter[] = ["pending", "approved", "rejected", "archived", "all"];
 
 const rejectionReasons = [
   { value: "fel pris", label: "Fel pris" },
   { value: "dublett", label: "Dublett" },
   { value: "oklart ställe", label: "Oklart ställe" },
-  { value: "test/skräp", label: "Test/skräp" },
+  { value: "inte ölpris", label: "Inte ölpris" },
   { value: "annat", label: "Annat" },
 ];
 
 const inputClass = "rounded-md border border-black/15 bg-white px-3 py-3 font-medium text-ink";
 const labelClass = "grid gap-2 text-sm font-bold text-ink";
-const freeBeerOptionValue = "__free__";
 
 function parsePositiveDecimal(value: string): number | null {
-  const parsed = Number(value.replace(",", "."));
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed.replace(",", "."));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
@@ -99,8 +108,8 @@ function dateInputValue(value?: string | null) {
   return value ? value.slice(0, 10) : "";
 }
 
-function decimalValue(value: number) {
-  return Number(value).toString();
+function decimalValue(value?: number | null) {
+  return value == null ? "" : Number(value).toString();
 }
 
 function feedbackClass(tone: Feedback["tone"]) {
@@ -120,47 +129,19 @@ function statusBadgeClass(status: ReportStatus) {
     return "bg-hop text-white";
   }
 
-  if (status === "rejected") {
+  if (status === "rejected" || status === "archived") {
     return "bg-copper text-white";
   }
 
   return "bg-white text-ink ring-1 ring-black/15";
 }
 
-function activeBadgeClass(isActive?: boolean) {
-  return isActive === false ? "bg-copper text-white" : "bg-hop text-white";
-}
-
 function getVenueDisplayName(report: AdminPriceReport) {
   return report.venue?.name || report.venue_name;
 }
 
-function getVenueBadgeText(report: AdminPriceReport) {
-  return report.venue_id ? "Befintligt ställe" : "Nytt ställe";
-}
-
-function getVenueDetailText(report: AdminPriceReport) {
-  if (report.venue_id && report.venue?.name) {
-    return `Kopplad till ${report.venue.name}`;
-  }
-
-  if (report.venue_id) {
-    return "Kopplad till befintligt ställe";
-  }
-
-  return "Skapar nytt ställe vid godkännande";
-}
-
-function getBeerBadgeText(report: AdminPriceReport) {
-  return report.beer_id ? "Katalogöl" : "Okopplad öl";
-}
-
-function getBeerDetailText(report: AdminPriceReport) {
-  if (report.beer) {
-    return `${report.beer.name} · ${beerStyleLabels[report.beer.style]}`;
-  }
-
-  return "Saknar katalogkoppling";
+function getBeerDisplayName(item: Pick<AdminPriceReport | AdminBeerPrice, "beer" | "beer_name">) {
+  return item.beer?.name || item.beer_name || "Ej angivet";
 }
 
 function makeInitialEditState(report: AdminPriceReport): ReportEditState {
@@ -168,14 +149,17 @@ function makeInitialEditState(report: AdminPriceReport): ReportEditState {
     venueMode: report.venue_id ? "existing" : "new",
     venueId: report.venue_id ?? "",
     venueName: report.venue?.name || report.venue_name,
-    beerMode: report.beer_id ? "catalog" : "free",
     beerId: report.beer_id ?? "",
-    beerName: report.beer_name,
+    beerName: report.beer_name ?? "",
     priceSek: decimalValue(report.price_sek),
     volumeCl: decimalValue(report.volume_cl),
+    volumeIsVerified: report.volume_is_verified,
     priceType: report.price_type,
+    sourceType: report.source_type,
+    sourceUrl: report.source_url ?? "",
     observedAt: dateInputValue(report.observed_at),
     reporterNote: report.reporter_note ?? "",
+    adminNote: report.admin_note ?? "",
   };
 }
 
@@ -208,6 +192,7 @@ export default function AdminReports() {
     pending: 0,
     approved: 0,
     rejected: 0,
+    archived: 0,
   });
   const [venues, setVenues] = useState<Venue[]>([]);
   const [beers, setBeers] = useState<BeerCatalogItem[]>([]);
@@ -274,11 +259,9 @@ export default function AdminReports() {
     let isMounted = true;
 
     getCurrentUser().then((user) => {
-      if (!isMounted) {
-        return;
+      if (isMounted) {
+        setAuthState(user ? "signedIn" : "signedOut");
       }
-
-      setAuthState(user ? "signedIn" : "signedOut");
     });
 
     const subscription = onAdminAuthChange((user) => {
@@ -347,9 +330,8 @@ export default function AdminReports() {
 
   function validateReportEdit(report: AdminPriceReport, edit: ReportEditState) {
     const selectedVenue = edit.venueMode === "existing" ? venues.find((venue) => venue.id === edit.venueId) : null;
-    const selectedBeer = edit.beerMode === "catalog" ? beers.find((beer) => beer.id === edit.beerId) : null;
+    const selectedBeer = edit.beerId ? beers.find((beer) => beer.id === edit.beerId) : null;
     const venueName = edit.venueMode === "existing" ? selectedVenue?.name ?? "" : edit.venueName.trim();
-    const beerName = edit.beerMode === "catalog" ? selectedBeer?.name ?? "" : edit.beerName.trim();
     const price = parsePositiveDecimal(edit.priceSek);
     const volume = parsePositiveDecimal(edit.volumeCl);
 
@@ -357,24 +339,20 @@ export default function AdminReports() {
       return { ok: false as const, message: "Serveringsställe krävs." };
     }
 
-    if (edit.beerMode === "catalog" && !selectedBeer) {
-      return { ok: false as const, message: "Välj katalogöl eller behåll som okopplad öl." };
-    }
-
-    if (!beerName) {
-      return { ok: false as const, message: "Ölnamn krävs." };
-    }
-
     if (price == null) {
       return { ok: false as const, message: "Pris måste vara större än 0." };
     }
 
-    if (volume == null) {
-      return { ok: false as const, message: "Volym måste vara större än 0." };
+    if (edit.volumeCl.trim() && volume == null) {
+      return { ok: false as const, message: "Volym måste vara större än 0 om den anges." };
     }
 
     if (!validPriceTypes.includes(edit.priceType)) {
       return { ok: false as const, message: "Pristypen är inte giltig." };
+    }
+
+    if (!validSourceTypes.includes(edit.sourceType)) {
+      return { ok: false as const, message: "Källan är inte giltig." };
     }
 
     return {
@@ -382,18 +360,22 @@ export default function AdminReports() {
       overrides: {
         venue_id: selectedVenue?.id ?? null,
         venue_name: venueName,
-        beer_id: selectedBeer?.id ?? null,
-        beer_name: beerName,
-        volume_cl: volume,
         price_sek: price,
+        beer_id: selectedBeer?.id ?? null,
+        beer_name: selectedBeer?.name || edit.beerName.trim() || null,
+        volume_cl: volume,
+        volume_is_verified: volume != null && edit.volumeIsVerified,
         price_type: edit.priceType,
+        source_type: edit.sourceType,
+        source_url: edit.sourceUrl.trim() || null,
         observed_at: edit.observedAt || report.observed_at || null,
         reporter_note: edit.reporterNote.trim() || null,
+        admin_note: edit.adminNote.trim() || null,
       },
     };
   }
 
-  async function handleApprove(report: AdminPriceReport) {
+  async function handleApprove(report: AdminPriceReport, verifyAdmin: boolean) {
     const edit = editStates[report.id] ?? makeInitialEditState(report);
     const validation = validateReportEdit(report, edit);
 
@@ -405,7 +387,7 @@ export default function AdminReports() {
     setActionReportId(report.id);
     setFeedback(null);
 
-    const result = await approveReport(report.id, validation.overrides);
+    const result = await approveReport(report.id, validation.overrides, verifyAdmin);
 
     setActionReportId(null);
 
@@ -414,7 +396,7 @@ export default function AdminReports() {
       return;
     }
 
-    setFeedback({ tone: "success", text: "Rapporten godkändes med de redigerade värdena." });
+    setFeedback({ tone: "success", text: verifyAdmin ? "Rapporten publicerades som verifierad." : "Rapporten publicerades utan adminverifiering." });
     await loadAdminData(reportStatusFilter);
   }
 
@@ -443,20 +425,37 @@ export default function AdminReports() {
     await loadAdminData(reportStatusFilter);
   }
 
-  async function handlePriceActiveChange(priceId: string, isActive: boolean) {
+  async function handleMarkVerified(priceId: string) {
     setActionPriceId(priceId);
     setFeedback(null);
 
-    const result = isActive ? await reactivateBeerPrice(priceId) : await deactivateBeerPrice(priceId);
+    const result = await markBeerPriceVerified(priceId);
 
     setActionPriceId(null);
 
     if (!result.ok) {
-      setFeedback({ tone: "error", text: result.message ?? "Priset kunde inte uppdateras." });
+      setFeedback({ tone: "error", text: result.message ?? "Priset kunde inte verifieras." });
       return;
     }
 
-    setFeedback({ tone: "success", text: isActive ? "Priset återaktiverades." : "Priset avaktiverades och döljs publikt." });
+    setFeedback({ tone: "success", text: "Priset markerades som verifierat." });
+    await loadAdminData(reportStatusFilter);
+  }
+
+  async function handleArchive(priceId: string) {
+    setActionPriceId(priceId);
+    setFeedback(null);
+
+    const result = await archiveBeerPrice(priceId);
+
+    setActionPriceId(null);
+
+    if (!result.ok) {
+      setFeedback({ tone: "error", text: result.message ?? "Priset kunde inte arkiveras." });
+      return;
+    }
+
+    setFeedback({ tone: "success", text: "Priset arkiverades och döljs publikt." });
     await loadAdminData(reportStatusFilter);
   }
 
@@ -508,9 +507,9 @@ export default function AdminReports() {
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-normal text-copper">Admin</p>
-          <h1 className="mt-3 text-4xl font-black text-ink sm:text-5xl">Moderera data</h1>
+          <h1 className="mt-3 text-4xl font-black text-ink sm:text-5xl">Moderera priser</h1>
           <p className="mt-3 text-base leading-7 text-ink/70">
-            Justera rapporter före godkännande, avvisa skräpdata och dölj felaktiga publika priser utan hårdradering.
+            Publicera billigaste kända pris per ställe, verifiera separat och arkivera historik utan hårdradering.
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -536,9 +535,9 @@ export default function AdminReports() {
             <h2 className="text-2xl font-black text-ink">Rapporter</h2>
             <p className="mt-1 text-sm font-bold text-ink/60">{isLoadingReports ? "Laddar..." : reportCountLabel}</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-4">
+          <div className="grid gap-2 sm:grid-cols-5">
             {statusFilters.map((filter) => {
-              const count = filter === "all" ? reportCounts.pending + reportCounts.approved + reportCounts.rejected : reportCounts[filter];
+              const count = filter === "all" ? Object.values(reportCounts).reduce((sum, value) => sum + value, 0) : reportCounts[filter];
               const isSelected = reportStatusFilter === filter;
 
               return (
@@ -578,7 +577,8 @@ export default function AdminReports() {
                   isBusy={actionReportId === report.id}
                   onEdit={(patch) => updateEditState(report.id, patch)}
                   onRejectEdit={(patch) => updateRejectState(report.id, patch)}
-                  onApprove={() => handleApprove(report)}
+                  onApprove={() => handleApprove(report, false)}
+                  onApproveVerified={() => handleApprove(report, true)}
                   onReject={() => handleReject(report.id)}
                 />
               ) : (
@@ -592,16 +592,16 @@ export default function AdminReports() {
       <div className="mt-8 rounded-lg border border-black/10 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-2xl font-black text-ink">Publika priser</h2>
-            <p className="mt-1 text-sm font-semibold text-ink/60">Senaste 100 priserna. Inaktiva priser döljs från den publika listan.</p>
+            <h2 className="text-2xl font-black text-ink">Prisposter</h2>
+            <p className="mt-1 text-sm font-semibold text-ink/60">Senaste 100 posterna. Bara godkända aktuella poster visas publikt.</p>
           </div>
-          <span className="w-fit rounded-full bg-foam px-3 py-1 text-xs font-black text-ink ring-1 ring-black/10">{adminPrices.length} priser</span>
+          <span className="w-fit rounded-full bg-foam px-3 py-1 text-xs font-black text-ink ring-1 ring-black/10">{adminPrices.length} poster</span>
         </div>
 
         {adminPrices.length === 0 && !isLoadingReports && (
           <div className="mt-5 rounded-lg bg-foam p-6 text-center">
             <h3 className="text-xl font-black text-ink">Inga priser att visa</h3>
-            <p className="mt-2 text-ink/70">När verifierade priser finns i databasen visas de här.</p>
+            <p className="mt-2 text-ink/70">När godkända priser finns i databasen visas de här.</p>
           </div>
         )}
 
@@ -613,28 +613,41 @@ export default function AdminReports() {
                   <div className="grid gap-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-xl font-black text-ink">{price.venue.name}</h3>
-                      <span className={`rounded-full px-3 py-1 text-xs font-black ${activeBadgeClass(price.is_active)}`}>
-                        {price.is_active === false ? "Inaktivt/dolt pris" : "Aktivt pris"}
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${statusBadgeClass(price.status)}`}>{statusLabels[price.status]}</span>
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${price.is_current_cheapest ? "bg-hop text-white" : "bg-white text-ink ring-1 ring-black/15"}`}>
+                        {price.is_current_cheapest ? "Aktuell billigast" : "Historik"}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">
-                        {price.is_verified ? "Verifierad" : "Ej verifierad"}
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${price.admin_verified ? "bg-hop text-white" : "bg-white text-ink ring-1 ring-black/15"}`}>
+                        {price.admin_verified ? "Verifierad" : "Ej verifierad"}
                       </span>
                     </div>
                     <p className="text-sm font-semibold text-ink/70">
-                      {price.beer?.name || price.beer_name} · {formatSek(price.price_sek)} · {price.volume_cl} cl · {formatPricePerLiter(price.price_per_liter_sek)} ·{" "}
-                      {priceTypeLabels[price.price_type]} · observerat {formatDate(price.observed_at)}
+                      {formatSek(price.price_sek)} · {PRICE_TYPE_LABELS[price.price_type]} · Källa: {SOURCE_TYPE_LABELS[price.source_type]} · {getBeerDisplayName(price)}
+                      {price.volume_is_verified && price.volume_cl != null ? ` · ${price.volume_cl} cl` : ""}
                     </p>
                   </div>
-                  <button
-                    className={`rounded-md px-4 py-3 font-black disabled:cursor-not-allowed disabled:bg-ink/40 ${
-                      price.is_active === false ? "bg-hop text-white hover:bg-ink" : "border border-copper bg-white text-copper hover:bg-copper hover:text-white"
-                    }`}
-                    type="button"
-                    onClick={() => handlePriceActiveChange(price.id, price.is_active === false)}
-                    disabled={actionPriceId === price.id}
-                  >
-                    {actionPriceId === price.id ? "Uppdaterar..." : price.is_active === false ? "Återaktivera" : "Avaktivera"}
-                  </button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    {!price.admin_verified && price.status === "approved" && (
+                      <button
+                        className="rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink disabled:cursor-not-allowed disabled:bg-ink/40"
+                        type="button"
+                        onClick={() => handleMarkVerified(price.id)}
+                        disabled={actionPriceId === price.id}
+                      >
+                        Markera verifierad
+                      </button>
+                    )}
+                    {price.status === "approved" && price.is_current_cheapest && (
+                      <button
+                        className="rounded-md border border-copper bg-white px-4 py-3 font-black text-copper hover:bg-copper hover:text-white disabled:cursor-not-allowed disabled:border-ink/30 disabled:text-ink/40"
+                        type="button"
+                        onClick={() => handleArchive(price.id)}
+                        disabled={actionPriceId === price.id}
+                      >
+                        Arkivera
+                      </button>
+                    )}
+                  </div>
                 </div>
               </article>
             ))}
@@ -655,6 +668,7 @@ function PendingReportCard({
   onEdit,
   onRejectEdit,
   onApprove,
+  onApproveVerified,
   onReject,
 }: {
   report: AdminPriceReport;
@@ -666,13 +680,11 @@ function PendingReportCard({
   onEdit: (patch: Partial<ReportEditState>) => void;
   onRejectEdit: (patch: Partial<RejectState>) => void;
   onApprove: () => void;
+  onApproveVerified: () => void;
   onReject: () => void;
 }) {
   const selectedVenue = venues.find((venue) => venue.id === edit.venueId) ?? null;
   const selectedBeer = beers.find((beer) => beer.id === edit.beerId) ?? null;
-  const price = parsePositiveDecimal(edit.priceSek);
-  const volume = parsePositiveDecimal(edit.volumeCl);
-  const calculatedPricePerLiter = price != null && volume != null ? calculatePricePerLiter(price, volume) : null;
 
   return (
     <article className="rounded-lg border border-black/10 bg-foam p-4">
@@ -680,13 +692,12 @@ function PendingReportCard({
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-2xl font-black text-ink">{getVenueDisplayName(report)}</h3>
-            <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">{getVenueBadgeText(report)}</span>
-            <span className={`rounded-full px-3 py-1 text-xs font-black ${report.beer_id ? "bg-hop text-white" : "bg-copper text-white"}`}>{getBeerBadgeText(report)}</span>
             <span className={`rounded-full px-3 py-1 text-xs font-black ${statusBadgeClass(report.status)}`}>{statusLabels[report.status]}</span>
           </div>
           <p className="mt-1 text-sm font-semibold text-ink/60">Rapporterad {formatDate(report.created_at)}</p>
-          <p className="mt-1 text-sm font-semibold text-ink/60">{getVenueDetailText(report)}</p>
-          <p className="mt-1 text-sm font-semibold text-ink/60">{getBeerDetailText(report)}</p>
+          <p className="mt-1 text-sm font-semibold text-ink/60">
+            {formatSek(report.price_sek)} · {PRICE_TYPE_LABELS[report.price_type]} · Källa: {SOURCE_TYPE_LABELS[report.source_type]}
+          </p>
         </div>
       </div>
 
@@ -725,63 +736,72 @@ function PendingReportCard({
           )}
         </fieldset>
 
-        <fieldset className="grid gap-3 rounded-md bg-white p-3 lg:col-span-2">
-          <legend className="px-1 text-sm font-black text-ink">Öl</legend>
-          <label className={labelClass}>
-            Katalogkoppling
-            <select
-              className={inputClass}
-              value={edit.beerMode === "free" ? freeBeerOptionValue : edit.beerId}
-              onChange={(event) => {
-                if (event.target.value === freeBeerOptionValue) {
-                  onEdit({ beerMode: "free", beerId: "", beerName: report.beer_name });
-                  return;
-                }
-
-                const beer = beers.find((item) => item.id === event.target.value);
-                onEdit({ beerMode: "catalog", beerId: event.target.value, beerName: beer?.name ?? edit.beerName });
-              }}
-            >
-              <option value="">Välj katalogöl</option>
-              {beers.map((beer) => (
-                <option key={beer.id} value={beer.id}>
-                  {beer.name} · {beerStyleLabels[beer.style]}
-                </option>
-              ))}
-              <option value={freeBeerOptionValue}>Behåll som okopplad öl</option>
-            </select>
-            <OriginalValue show={changedText(selectedBeer?.name, report.beer?.name || report.beer_name)} value={report.beer?.name || report.beer_name} />
-          </label>
-          {edit.beerMode === "free" ? (
-            <label className={labelClass}>
-              Okopplat ölnamn
-              <input className={inputClass} value={edit.beerName} onChange={(event) => onEdit({ beerName: event.target.value })} />
-              <span className="text-xs font-semibold text-copper">Rapporten kan godkännas, men priset saknar katalogkoppling.</span>
-            </label>
-          ) : (
-            selectedBeer && <p className="rounded-md bg-foam px-3 py-2 text-sm font-semibold text-ink/70">{beerStyleLabels[selectedBeer.style]} {selectedBeer.brewery ? `· ${selectedBeer.brewery}` : ""}</p>
-          )}
-        </fieldset>
         <label className={labelClass}>
           Pris i kronor
           <input className={inputClass} inputMode="decimal" value={edit.priceSek} onChange={(event) => onEdit({ priceSek: event.target.value })} />
           <OriginalValue show={changedText(edit.priceSek, decimalValue(report.price_sek))} value={formatSek(report.price_sek)} />
         </label>
         <label className={labelClass}>
-          Volym i cl
-          <input className={inputClass} inputMode="decimal" value={edit.volumeCl} onChange={(event) => onEdit({ volumeCl: event.target.value })} />
-          <OriginalValue show={changedText(edit.volumeCl, decimalValue(report.volume_cl))} value={`${report.volume_cl} cl`} />
-        </label>
-        <label className={labelClass}>
           Pristyp
-          <select className={inputClass} value={edit.priceType} onChange={(event) => onEdit({ priceType: event.target.value as PriceType })}>
+          <select className={inputClass} value={edit.priceType} onChange={(event) => onEdit({ priceType: event.target.value as BeerPriceType })}>
             {validPriceTypes.map((priceType) => (
               <option key={priceType} value={priceType}>
-                {priceTypeLabels[priceType]}
+                {PRICE_TYPE_LABELS[priceType]}
               </option>
             ))}
           </select>
-          <OriginalValue show={edit.priceType !== report.price_type} value={priceTypeLabels[report.price_type]} />
+          <OriginalValue show={edit.priceType !== report.price_type} value={PRICE_TYPE_LABELS[report.price_type]} />
+        </label>
+        <label className={labelClass}>
+          Källa
+          <select className={inputClass} value={edit.sourceType} onChange={(event) => onEdit({ sourceType: event.target.value as BeerPriceSourceType })}>
+            {validSourceTypes.map((sourceType) => (
+              <option key={sourceType} value={sourceType}>
+                {SOURCE_TYPE_LABELS[sourceType]}
+              </option>
+            ))}
+          </select>
+          <OriginalValue show={edit.sourceType !== report.source_type} value={SOURCE_TYPE_LABELS[report.source_type]} />
+        </label>
+        <label className={labelClass}>
+          Källänk
+          <input className={inputClass} inputMode="url" value={edit.sourceUrl} onChange={(event) => onEdit({ sourceUrl: event.target.value })} />
+          <OriginalValue show={changedText(edit.sourceUrl, report.source_url)} value={report.source_url || "Ingen länk"} />
+        </label>
+        <label className={labelClass}>
+          Katalogöl
+          <select
+            className={inputClass}
+            value={edit.beerId}
+            onChange={(event) => {
+              const beer = beers.find((item) => item.id === event.target.value);
+              onEdit({ beerId: event.target.value, beerName: beer?.name ?? edit.beerName });
+            }}
+          >
+            <option value="">Ingen katalogkoppling</option>
+            {beers.map((beer) => (
+              <option key={beer.id} value={beer.id}>
+                {beer.name} · {beerStyleLabels[beer.style]}
+              </option>
+            ))}
+          </select>
+          <OriginalValue show={changedText(selectedBeer?.name, report.beer?.name || report.beer_name)} value={report.beer?.name || report.beer_name || "Ingen öl"} />
+        </label>
+        {!selectedBeer && (
+          <label className={labelClass}>
+            Öltyp eller namn
+            <input className={inputClass} value={edit.beerName} onChange={(event) => onEdit({ beerName: event.target.value })} />
+            <OriginalValue show={changedText(edit.beerName, report.beer_name)} value={report.beer_name || "Ingen öl"} />
+          </label>
+        )}
+        <label className={labelClass}>
+          Volym i cl
+          <input className={inputClass} inputMode="decimal" value={edit.volumeCl} onChange={(event) => onEdit({ volumeCl: event.target.value })} />
+          <OriginalValue show={changedText(edit.volumeCl, decimalValue(report.volume_cl))} value={report.volume_cl == null ? "Ingen volym" : `${report.volume_cl} cl`} />
+        </label>
+        <label className="flex min-h-[3.25rem] items-center gap-3 self-end rounded-md border border-black/15 bg-white px-3 text-sm font-bold text-ink">
+          <input className="size-4 accent-hop" type="checkbox" checked={edit.volumeIsVerified} onChange={(event) => onEdit({ volumeIsVerified: event.target.checked })} />
+          Volym verifierad
         </label>
         <label className={labelClass}>
           Observerat datum
@@ -789,20 +809,17 @@ function PendingReportCard({
           <OriginalValue show={changedText(edit.observedAt, dateInputValue(report.observed_at))} value={formatDate(report.observed_at)} />
         </label>
         <label className={`${labelClass} lg:col-span-2`}>
-          Kommentar/adminnotering
+          Kommentar
           <textarea className={`${inputClass} min-h-24`} value={edit.reporterNote} onChange={(event) => onEdit({ reporterNote: event.target.value })} />
           <OriginalValue show={changedText(edit.reporterNote, report.reporter_note)} value={report.reporter_note || "Ingen kommentar"} />
         </label>
+        <label className={`${labelClass} lg:col-span-2`}>
+          Adminnotering
+          <textarea className={`${inputClass} min-h-24`} value={edit.adminNote} onChange={(event) => onEdit({ adminNote: event.target.value })} />
+        </label>
       </div>
 
-      <div className="mt-4 rounded-md bg-white p-3">
-        <p className="text-sm font-bold text-ink/55">Justerat literpris</p>
-        <p className="mt-1 text-2xl font-black text-hop">
-          {calculatedPricePerLiter == null ? "Kontrollera pris och volym" : formatPricePerLiter(calculatedPricePerLiter)}
-        </p>
-      </div>
-
-      <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-end">
+      <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
         <label className={labelClass}>
           Avvisningsorsak
           <select className={inputClass} value={rejectState.reason} onChange={(event) => onRejectEdit({ reason: event.target.value })}>
@@ -825,7 +842,15 @@ function PendingReportCard({
           onClick={onApprove}
           disabled={isBusy}
         >
-          {isBusy ? "Hanterar..." : "Godkänn"}
+          Godkänn och visa
+        </button>
+        <button
+          className="rounded-md bg-ink px-4 py-3 font-black text-white hover:bg-hop disabled:cursor-not-allowed disabled:bg-ink/40"
+          type="button"
+          onClick={onApproveVerified}
+          disabled={isBusy}
+        >
+          Godkänn som verifierad
         </button>
         <button
           className="rounded-md border border-copper bg-white px-4 py-3 font-black text-copper hover:bg-copper hover:text-white disabled:cursor-not-allowed disabled:border-ink/30 disabled:text-ink/40"
@@ -848,12 +873,10 @@ function HistoryReportCard({ report }: { report: AdminPriceReport }) {
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-xl font-black text-ink">{getVenueDisplayName(report)}</h3>
             <span className={`rounded-full px-3 py-1 text-xs font-black ${statusBadgeClass(report.status)}`}>{statusLabels[report.status]}</span>
-            <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">{getVenueBadgeText(report)}</span>
-            <span className={`rounded-full px-3 py-1 text-xs font-black ${report.beer_id ? "bg-hop text-white" : "bg-copper text-white"}`}>{getBeerBadgeText(report)}</span>
           </div>
           <p className="mt-2 text-sm font-semibold text-ink/70">
-            {report.beer?.name || report.beer_name} · {formatSek(report.price_sek)} · {report.volume_cl} cl · {formatPricePerLiter(report.price_per_liter_sek)} ·{" "}
-            {priceTypeLabels[report.price_type]}
+            {formatSek(report.price_sek)} · {PRICE_TYPE_LABELS[report.price_type]} · Källa: {SOURCE_TYPE_LABELS[report.source_type]} · {getBeerDisplayName(report)}
+            {report.volume_is_verified && report.volume_cl != null ? ` · ${report.volume_cl} cl` : ""}
           </p>
           <p className="mt-1 text-sm text-ink/60">
             Granskad {formatDate(report.reviewed_at)} {report.rejection_reason ? `· Orsak: ${report.rejection_reason}` : ""}
