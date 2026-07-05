@@ -10,15 +10,15 @@ const validPriceTypes: PriceType[] = ["normalpris", "after_work", "happy_hour", 
 
 const priceTypeLabels: Record<PriceType, string> = {
   normalpris: "Normalpris",
-  after_work: "After work",
+  after_work: "AW",
   happy_hour: "Happy hour",
   student: "Student",
   okänd: "Okänd",
 };
 
 const inputClass =
-  "rounded-md border border-line bg-paper px-3 py-3 font-semibold text-ink placeholder:text-ink/35 focus:border-hop focus:outline-none focus:ring-2 focus:ring-hop/25";
-const labelClass = "grid gap-2 text-sm font-black text-ink";
+  "min-h-[3.25rem] w-full min-w-0 rounded-2xl border border-white/10 bg-white/[0.08] px-4 py-3 font-bold text-foam outline-none placeholder:text-foam/30 focus:border-malt focus:ring-2 focus:ring-malt/20";
+const labelClass = "grid min-w-0 gap-2 text-sm font-black text-foam";
 
 function parsePositiveDecimal(value: string): number | null {
   const parsed = Number(value.replace(",", "."));
@@ -32,14 +32,23 @@ function isValidPriceType(value: string): value is PriceType {
 
 function messageClass(state: SubmitState) {
   if (state === "saved" || state === "preview") {
-    return "border-hop/30 bg-hop/10 text-hop";
+    return "border-hop/30 bg-hop/[0.14] text-foam";
   }
 
   if (state === "error") {
-    return "border-copper/40 bg-copper/10 text-copper";
+    return "border-copper/40 bg-copper/[0.14] text-foam";
   }
 
-  return "border-line bg-foam text-ink";
+  return "border-white/10 bg-white/[0.06] text-foam";
+}
+
+function StepLabel({ number, title }: { number: string; title: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <span className="grid size-8 place-items-center rounded-full bg-malt text-sm font-black text-night">{number}</span>
+      <h3 className="min-w-0 text-lg font-black text-foam">{title}</h3>
+    </div>
+  );
 }
 
 export default function ReportPriceForm() {
@@ -78,7 +87,7 @@ export default function ReportPriceForm() {
         }
 
         setVenueMode("new");
-        setMessage("Kunde inte hämta listan med ställen just nu. Ange stället manuellt.");
+        setMessage("Kunde inte hämta ställen. Skriv in stället själv.");
         setSubmitState("error");
       })
       .finally(() => {
@@ -105,28 +114,25 @@ export default function ReportPriceForm() {
 
   const selectedVenue = venues.find((venue) => venue.id === selectedVenueId) ?? null;
   const isSubmitting = submitState === "submitting";
+  const canShowSuccess = submitState === "saved" || submitState === "preview";
 
   return (
-    <section id="rapportera" className="border-t border-line bg-foam px-4 py-12 sm:px-6 lg:px-8">
-      <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
-        <div>
-          <p className="text-sm font-black uppercase tracking-normal text-copper">Rapportera pris</p>
-          <h2 className="mt-2 text-3xl font-black text-ink sm:text-5xl">Har du hittat en bättre bira?</h2>
-          <p className="mt-4 text-base leading-7 text-ink/70">
-            Skicka in priset medan du minns detaljerna. Rapporten hamnar i moderering innan den blir publik.
-          </p>
-
-          <div className="mt-6 rounded-lg border border-line bg-paper p-4">
-            <p className="text-xs font-black uppercase text-copper">Förhandsvisning</p>
-            <p className="mt-1 text-3xl font-black text-ink">{calculatedPrice ?? "Fyll i pris och volym"}</p>
-            <p className="mt-2 text-sm font-semibold text-ink/60">
-              {venueMode === "existing" ? selectedVenue?.name ?? "Välj serveringsställe" : newVenueName || "Nytt serveringsställe"}
-            </p>
+    <section id="rapportera" className="mt-10 min-w-0 scroll-mt-24">
+      <div className="min-w-0 rounded-[2rem] border border-white/10 bg-white/[0.06] p-4 shadow-app backdrop-blur-xl sm:p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-black uppercase tracking-normal text-malt">Rapportera pris</p>
+            <h2 className="mt-1 text-3xl font-black text-foam">Ser du ett bättre pris?</h2>
+            <p className="mt-2 max-w-sm text-sm font-semibold leading-6 text-foam/60">Skicka in det på 20 sekunder. Admin granskar innan det syns.</p>
+          </div>
+          <div className="hidden rounded-3xl bg-night/50 px-4 py-3 text-right ring-1 ring-white/10 sm:block">
+            <p className="text-xs font-black uppercase text-foam/40">Preview</p>
+            <p className="mt-1 text-xl font-black text-lager">{calculatedPrice ?? "Fyll i"}</p>
           </div>
         </div>
 
         <form
-          className="rounded-lg border border-line bg-white p-4 shadow-soft sm:p-6"
+          className="mt-5 grid min-w-0 gap-5"
           onSubmit={async (event) => {
             event.preventDefault();
             setSubmitState("submitting");
@@ -137,31 +143,31 @@ export default function ReportPriceForm() {
             const venueName = newVenueName.trim();
 
             if (venueMode === "existing" && !selectedVenue) {
-              setMessage("Välj ett serveringsställe eller lägg till ett nytt.");
+              setMessage("Välj ställe eller lägg till ett nytt.");
               setSubmitState("error");
               return;
             }
 
             if (venueMode === "new" && !venueName) {
-              setMessage("Ange namnet på serveringsstället.");
+              setMessage("Skriv namnet på stället.");
               setSubmitState("error");
               return;
             }
 
             if (!beerName.trim()) {
-              setMessage("Ange öl eller prisnamn.");
+              setMessage("Skriv öl eller prisnamn.");
               setSubmitState("error");
               return;
             }
 
             if (price == null) {
-              setMessage("Ange ett pris som är större än 0.");
+              setMessage("Priset måste vara större än 0.");
               setSubmitState("error");
               return;
             }
 
             if (volume == null) {
-              setMessage("Ange en volym som är större än 0.");
+              setMessage("Volymen måste vara större än 0.");
               setSubmitState("error");
               return;
             }
@@ -188,9 +194,9 @@ export default function ReportPriceForm() {
               setMessage(
                 result.ok
                   ? result.persisted
-                    ? "Tack. Rapporten är mottagen och väntar på moderering."
-                    : "Tack. Rapporten är kontrollerad, men sparas först när databasen är ansluten."
-                  : "Rapporten kunde inte tas emot just nu. Försök igen om en stund.",
+                    ? "Tack, priset är inskickat."
+                    : "Tack, priset är kontrollerat. Databasen sparar när den är ansluten."
+                  : "Rapporten kunde inte skickas. Försök igen.",
               );
 
               if (result.ok) {
@@ -200,117 +206,125 @@ export default function ReportPriceForm() {
                 setNewVenueName("");
               }
             } catch {
-              setMessage("Rapporten kunde inte tas emot just nu. Försök igen om en stund.");
+              setMessage("Rapporten kunde inte skickas. Försök igen.");
               setSubmitState("error");
             }
           }}
         >
-          <fieldset className="grid gap-3">
-            <legend className="text-sm font-black text-ink">Serveringsställe</legend>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className={`flex items-center gap-3 rounded-md border px-3 py-3 text-sm font-black ${venueMode === "existing" ? "border-hop bg-moss text-hop" : "border-line bg-paper text-ink"}`}>
-                <input
-                  className="accent-hop"
-                  type="radio"
-                  name="venueMode"
-                  value="existing"
-                  checked={venueMode === "existing"}
-                  onChange={() => setVenueMode("existing")}
-                  disabled={venues.length === 0}
-                />
-                Välj befintligt ställe
+          <div className="min-w-0 rounded-3xl bg-night/45 p-4 ring-1 ring-white/10">
+            <StepLabel number="1" title="Var såg du priset?" />
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                className={`min-h-12 rounded-2xl px-3 text-sm font-black ${
+                  venueMode === "existing" ? "bg-malt text-night" : "bg-white/[0.08] text-foam/70 ring-1 ring-white/10"
+                }`}
+                type="button"
+                onClick={() => setVenueMode("existing")}
+                disabled={venues.length === 0}
+              >
+                Befintligt
+              </button>
+              <button
+                className={`min-h-12 rounded-2xl px-3 text-sm font-black ${
+                  venueMode === "new" ? "bg-malt text-night" : "bg-white/[0.08] text-foam/70 ring-1 ring-white/10"
+                }`}
+                type="button"
+                onClick={() => setVenueMode("new")}
+              >
+                Nytt ställe
+              </button>
+            </div>
+
+            <div className="mt-3">
+              {venueMode === "existing" ? (
+                <label className={labelClass}>
+                  Ställe
+                  <select
+                    className={inputClass}
+                    value={selectedVenueId}
+                    onChange={(event) => setSelectedVenueId(event.target.value)}
+                    disabled={isLoadingVenues || venues.length === 0}
+                    required
+                  >
+                    {isLoadingVenues && <option value="">Laddar ställen...</option>}
+                    {!isLoadingVenues && venues.length === 0 && <option value="">Inga ställen hittades</option>}
+                    {venues.map((venue) => (
+                      <option key={venue.id} value={venue.id}>
+                        {venue.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className={labelClass}>
+                  Nytt ställe
+                  <input className={inputClass} value={newVenueName} onChange={(event) => setNewVenueName(event.target.value)} placeholder="Exempelbaren" required />
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0 rounded-3xl bg-night/45 p-4 ring-1 ring-white/10">
+            <StepLabel number="2" title="Vad kostade det?" />
+            <div className="mt-4 grid min-w-0 grid-cols-2 gap-3">
+              <label className={labelClass}>
+                Pris
+                <input className={inputClass} inputMode="decimal" value={priceSek} onChange={(event) => setPriceSek(event.target.value)} placeholder="69" required />
               </label>
-              <label className={`flex items-center gap-3 rounded-md border px-3 py-3 text-sm font-black ${venueMode === "new" ? "border-hop bg-moss text-hop" : "border-line bg-paper text-ink"}`}>
-                <input className="accent-hop" type="radio" name="venueMode" value="new" checked={venueMode === "new"} onChange={() => setVenueMode("new")} />
-                Lägg till nytt ställe
+              <label className={labelClass}>
+                Volym
+                <input className={inputClass} inputMode="decimal" value={volumeCl} onChange={(event) => setVolumeCl(event.target.value)} placeholder="40" required />
               </label>
             </div>
-          </fieldset>
+            <div className="mt-3 min-w-0 rounded-2xl bg-white/[0.08] px-4 py-3 ring-1 ring-white/10">
+              <p className="text-xs font-black uppercase text-foam/40">Kr/liter</p>
+              <p className="mt-1 text-2xl font-black text-lager">{calculatedPrice ?? "Fyll i pris och volym"}</p>
+            </div>
+          </div>
 
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {venueMode === "existing" ? (
-              <label className={`${labelClass} sm:col-span-2`}>
-                Befintligt ställe
-                <select
-                  className={inputClass}
-                  value={selectedVenueId}
-                  onChange={(event) => setSelectedVenueId(event.target.value)}
-                  disabled={isLoadingVenues || venues.length === 0}
-                  required
-                >
-                  {isLoadingVenues && <option value="">Laddar ställen...</option>}
-                  {!isLoadingVenues && venues.length === 0 && <option value="">Inga ställen hittades</option>}
-                  {venues.map((venue) => (
-                    <option key={venue.id} value={venue.id}>
-                      {venue.name}
+          <div className="min-w-0 rounded-3xl bg-night/45 p-4 ring-1 ring-white/10">
+            <StepLabel number="3" title="Vilken bira?" />
+            <div className="mt-4 grid gap-3">
+              <label className={labelClass}>
+                Öl eller prisnamn
+                <input className={inputClass} value={beerName} onChange={(event) => setBeerName(event.target.value)} placeholder="Stor stark" required />
+              </label>
+              <label className={labelClass}>
+                Pristyp
+                <select className={inputClass} value={priceType} onChange={(event) => setPriceType(event.target.value as PriceType)}>
+                  {validPriceTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {priceTypeLabels[type]}
                     </option>
                   ))}
                 </select>
-                <span className="text-xs font-semibold text-ink/55">Saknas stället? Välj nytt ställe i rutan ovan.</span>
               </label>
-            ) : (
-              <label className={`${labelClass} sm:col-span-2`}>
-                Nytt ställe
-                <input className={inputClass} value={newVenueName} onChange={(event) => setNewVenueName(event.target.value)} placeholder="Exempelbaren" required />
-                <span className="text-xs font-semibold text-ink/55">Admin matchar mot befintliga ställen innan något nytt skapas.</span>
+              <label className={labelClass}>
+                Kommentar
+                <textarea
+                  className={`${inputClass} min-h-24`}
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  placeholder="Till exempel tid, dag eller villkor."
+                />
               </label>
-            )}
-
-            <label className={labelClass}>
-              Öl/prisnamn
-              <input className={inputClass} value={beerName} onChange={(event) => setBeerName(event.target.value)} placeholder="Stor stark" required />
-            </label>
-            <label className={labelClass}>
-              Pris i kronor
-              <input
-                className={inputClass}
-                inputMode="decimal"
-                value={priceSek}
-                onChange={(event) => setPriceSek(event.target.value)}
-                placeholder="69"
-                required
-              />
-            </label>
-            <label className={labelClass}>
-              Volym i cl
-              <input
-                className={inputClass}
-                inputMode="decimal"
-                value={volumeCl}
-                onChange={(event) => setVolumeCl(event.target.value)}
-                placeholder="40"
-                required
-              />
-            </label>
-            <label className={labelClass}>
-              Pristyp
-              <select className={inputClass} value={priceType} onChange={(event) => setPriceType(event.target.value as PriceType)}>
-                {validPriceTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {priceTypeLabels[type]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={`${labelClass} sm:col-span-2`}>
-              Kommentar
-              <textarea
-                className={`${inputClass} min-h-28`}
-                value={comment}
-                onChange={(event) => setComment(event.target.value)}
-                placeholder="Till exempel tid, dag, happy hour-villkor eller om priset bara gäller med studentkort."
-              />
-            </label>
+            </div>
           </div>
 
           <button
-            className="mt-5 w-full rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink disabled:cursor-not-allowed disabled:bg-ink/40"
+            className="min-h-14 rounded-2xl bg-malt px-5 text-base font-black text-night shadow-soft hover:bg-lager disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-foam/40"
             type="submit"
             disabled={isSubmitting}
           >
-            {isSubmitting ? "Skickar rapport..." : "Skicka till moderering"}
+            {isSubmitting ? "Skickar..." : "Skicka in pris"}
           </button>
-          {message && <p className={`mt-4 rounded-md border px-4 py-3 text-sm font-bold ${messageClass(submitState)}`}>{message}</p>}
+
+          {message && (
+            <div className={`rounded-3xl border px-4 py-4 text-sm font-bold ${messageClass(submitState)}`}>
+              <p className="text-base font-black">{canShowSuccess ? "Klart" : submitState === "error" ? "Något saknas" : "Status"}</p>
+              <p className="mt-1 text-foam/70">{message}</p>
+            </div>
+          )}
         </form>
       </div>
     </section>

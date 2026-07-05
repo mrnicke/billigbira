@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getBeerPriceList, type BeerPriceListItem, type PriceDataStatus } from "../lib/data/prices";
 import { formatPricePerLiter, formatSek } from "../lib/pricing";
-import type { PriceType } from "../lib/types";
+import type { PriceType, Venue } from "../lib/types";
 
 type SortMode = "pricePerLiter" | "venue" | "observedAt";
 type PriceTypeFilter = "all" | PriceType;
@@ -12,20 +12,33 @@ type Props = {
   dataStatus?: PriceDataStatus;
 };
 
+type VenueSummary = {
+  venue: Venue;
+  bestPrice: BeerPriceListItem;
+  priceCount: number;
+  latestObserved: string;
+};
+
 const priceTypeLabels: Record<PriceType, string> = {
   normalpris: "Normalpris",
-  after_work: "After work",
+  after_work: "AW",
   happy_hour: "Happy hour",
   student: "Student",
   okänd: "Okänd",
 };
 
-const priceTypeFilters: PriceTypeFilter[] = ["all", "normalpris", "after_work", "happy_hour", "student"];
+const priceTypeFilters: Array<{ value: PriceTypeFilter; label: string }> = [
+  { value: "all", label: "Alla" },
+  { value: "normalpris", label: "Normalpris" },
+  { value: "after_work", label: "AW" },
+  { value: "happy_hour", label: "Happy hour" },
+  { value: "student", label: "Student" },
+];
 
-const selectClass =
-  "w-full rounded-md border border-line bg-paper px-3 py-3 text-base font-bold text-ink shadow-sm focus:border-hop focus:outline-none focus:ring-2 focus:ring-hop/25";
 const inputClass =
-  "w-full rounded-md border border-line bg-paper px-3 py-3 text-base font-bold text-ink shadow-sm placeholder:text-ink/35 focus:border-hop focus:outline-none focus:ring-2 focus:ring-hop/25";
+  "min-h-12 w-full rounded-2xl border border-white/10 bg-white/[0.08] px-4 text-base font-bold text-foam outline-none placeholder:text-foam/30 focus:border-malt focus:ring-2 focus:ring-malt/20";
+const selectClass =
+  "min-h-12 w-full rounded-2xl border border-white/10 bg-white/[0.08] px-4 text-base font-bold text-foam outline-none focus:border-malt focus:ring-2 focus:ring-malt/20";
 
 function getVenueLocation(price: BeerPriceListItem) {
   return price.venue.district || price.venue.address || price.venue.city;
@@ -35,7 +48,6 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("sv-SE", {
     day: "numeric",
     month: "short",
-    year: "numeric",
   }).format(new Date(`${value}T12:00:00`));
 }
 
@@ -45,18 +57,93 @@ function priceTypeBadgeClass(priceType: PriceType) {
   }
 
   if (priceType === "student") {
-    return "bg-moss text-hop";
+    return "bg-hop/[0.18] text-hop ring-1 ring-hop/25";
   }
 
-  return "bg-white text-ink ring-1 ring-line";
+  return "bg-white/10 text-foam/70 ring-1 ring-white/10";
 }
 
 function rankLabel(index: number) {
   if (index === 0) {
-    return "Billigast";
+    return "Topp 1";
   }
 
   return `#${index + 1}`;
+}
+
+function rankingClass(index: number) {
+  if (index === 0) {
+    return "border-malt/50 bg-gradient-to-br from-malt/[0.18] to-white/[0.08]";
+  }
+
+  if (index < 3) {
+    return "border-white/[0.14] bg-white/[0.08]";
+  }
+
+  return "border-white/10 bg-white/[0.055]";
+}
+
+function VenueCard({ summary, isSelected, onSelect }: { summary: VenueSummary; isSelected: boolean; onSelect: () => void }) {
+  return (
+    <button
+      className={`min-w-[78%] rounded-3xl border p-4 text-left shadow-soft sm:min-w-72 ${
+        isSelected ? "border-malt bg-malt/[0.14]" : "border-white/10 bg-white/[0.06] hover:bg-white/[0.09]"
+      }`}
+      type="button"
+      onClick={onSelect}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-black text-foam">{summary.venue.name}</h3>
+          <p className="mt-1 text-sm font-semibold text-foam/50">{summary.venue.district || summary.venue.city}</p>
+        </div>
+        <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-black text-foam/60">{summary.priceCount}</span>
+      </div>
+      <p className="mt-4 text-2xl font-black text-lager">{formatPricePerLiter(summary.bestPrice.price_per_liter_sek)}</p>
+      <p className="mt-1 text-sm font-bold text-foam/60">Bäst här: {summary.bestPrice.beer_name}</p>
+      <p className="mt-3 text-xs font-bold text-foam/40">Senast {formatDate(summary.latestObserved)}</p>
+    </button>
+  );
+}
+
+function PriceRankCard({ price, index }: { price: BeerPriceListItem; index: number }) {
+  return (
+    <article className={`rounded-[1.75rem] border p-4 shadow-soft ${rankingClass(index)}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-3 py-1 text-xs font-black ${index === 0 ? "bg-malt text-night" : "bg-white/10 text-foam/65"}`}>
+              {rankLabel(index)}
+            </span>
+            <span className={`rounded-full px-3 py-1 text-xs font-black ${priceTypeBadgeClass(price.price_type)}`}>{priceTypeLabels[price.price_type]}</span>
+          </div>
+          <h3 className="mt-3 truncate text-xl font-black text-foam">{price.venue.name}</h3>
+          <p className="mt-1 truncate text-sm font-semibold text-foam/50">{getVenueLocation(price)}</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-3xl font-black leading-none text-lager">{formatPricePerLiter(price.price_per_liter_sek).replace(" kr/liter", "")}</p>
+          <p className="mt-1 text-xs font-black uppercase text-foam/40">kr/liter</p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-end justify-between gap-3 rounded-3xl bg-night/50 p-3 ring-1 ring-white/[0.08]">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-black text-foam">{price.beer_name}</p>
+          <p className="mt-1 text-xs font-semibold text-foam/50">Observerat {formatDate(price.observed_at)}</p>
+        </div>
+        <p className="shrink-0 text-right text-lg font-black text-foam">
+          {formatSek(price.price_sek)}
+          <span className="block text-xs font-bold text-foam/50">{price.volume_cl} cl</span>
+        </p>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <span className={`rounded-full px-3 py-1 text-xs font-black ${price.is_verified ? "bg-hop text-night" : "bg-white/10 text-foam/60 ring-1 ring-white/10"}`}>
+          {price.is_verified ? "Verifierad" : "Väntar på moderering"}
+        </span>
+      </div>
+    </article>
+  );
 }
 
 export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
@@ -64,6 +151,7 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
   const [searchTerm, setSearchTerm] = useState("");
   const [priceTypeFilter, setPriceTypeFilter] = useState<PriceTypeFilter>("all");
   const [volumeFilter, setVolumeFilter] = useState<VolumeFilter>("all");
+  const [venueFilter, setVenueFilter] = useState("all");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [visiblePrices, setVisiblePrices] = useState(prices);
@@ -101,6 +189,36 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
     return [...new Set(visiblePrices.map((price) => price.volume_cl))].sort((a, b) => a - b);
   }, [visiblePrices]);
 
+  const venueSummaries = useMemo(() => {
+    const summaries = new Map<string, VenueSummary>();
+
+    for (const price of visiblePrices) {
+      const existing = summaries.get(price.venue.id);
+
+      if (!existing) {
+        summaries.set(price.venue.id, {
+          venue: price.venue,
+          bestPrice: price,
+          priceCount: 1,
+          latestObserved: price.observed_at,
+        });
+        continue;
+      }
+
+      existing.priceCount += 1;
+
+      if (price.price_per_liter_sek < existing.bestPrice.price_per_liter_sek) {
+        existing.bestPrice = price;
+      }
+
+      if (price.observed_at.localeCompare(existing.latestObserved, "sv") > 0) {
+        existing.latestObserved = price.observed_at;
+      }
+    }
+
+    return [...summaries.values()].sort((a, b) => a.bestPrice.price_per_liter_sek - b.bestPrice.price_per_liter_sek);
+  }, [visiblePrices]);
+
   const sortedPrices = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLocaleLowerCase("sv");
 
@@ -114,9 +232,10 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
 
         const matchesType = priceTypeFilter === "all" || price.price_type === priceTypeFilter;
         const matchesVolume = volumeFilter === "all" || String(price.volume_cl) === volumeFilter;
+        const matchesVenue = venueFilter === "all" || price.venue.id === venueFilter;
         const matchesVerified = !verifiedOnly || price.is_verified;
 
-        return matchesSearch && matchesType && matchesVolume && matchesVerified;
+        return matchesSearch && matchesType && matchesVolume && matchesVenue && matchesVerified;
       })
       .sort((a, b) => {
         if (sortMode === "venue") {
@@ -129,67 +248,115 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
 
         return a.price_per_liter_sek - b.price_per_liter_sek;
       });
-  }, [visiblePrices, searchTerm, priceTypeFilter, volumeFilter, verifiedOnly, sortMode]);
+  }, [visiblePrices, searchTerm, priceTypeFilter, volumeFilter, venueFilter, verifiedOnly, sortMode]);
 
   const shouldShowLoading = !hasHydrated && prices.length === 0;
   const cheapestVisiblePrice = sortedPrices[0] ?? null;
-  const hasActiveFilters = searchTerm || priceTypeFilter !== "all" || volumeFilter !== "all" || verifiedOnly;
+  const hasActiveFilters = searchTerm || priceTypeFilter !== "all" || volumeFilter !== "all" || venueFilter !== "all" || verifiedOnly;
   const resultLabel = sortedPrices.length === 1 ? "1 pris" : `${sortedPrices.length} priser`;
+  const selectedVenueName = venueSummaries.find((summary) => summary.venue.id === venueFilter)?.venue.name ?? null;
 
   function resetFilters() {
     setSearchTerm("");
     setPriceTypeFilter("all");
     setVolumeFilter("all");
+    setVenueFilter("all");
     setVerifiedOnly(false);
     setSortMode("pricePerLiter");
   }
 
+  function selectVenue(venueId: string) {
+    setVenueFilter(venueId);
+    document.getElementById("priser")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
-    <section id="priser" className="bg-paper px-4 py-12 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+    <>
+      <section id="stallen" className="mt-8 min-w-0 scroll-mt-24">
+        <div className="flex items-end justify-between gap-3">
           <div>
-            <p className="text-sm font-black uppercase tracking-normal text-copper">Prislistan</p>
-            <h2 className="mt-2 text-3xl font-black text-ink sm:text-5xl">Billigast per liter först</h2>
-            <p className="mt-3 max-w-2xl text-base leading-7 text-ink/70">
-              Jämför ställen på samma villkor. Priset räknas om till kr/liter så att 33, 40 och 50 cl går att skanna snabbt.
-            </p>
+            <p className="text-sm font-black uppercase tracking-normal text-malt">Ställen</p>
+            <h2 className="mt-1 text-3xl font-black text-foam">Bästa pris per ställe</h2>
           </div>
-          <div className="rounded-md border border-line bg-foam p-4 md:min-w-64">
-            <p className="text-xs font-black uppercase text-copper">Aktuell vy</p>
-            <p className="mt-1 text-2xl font-black text-ink">{resultLabel}</p>
-            <p className="mt-1 text-sm font-semibold text-ink/60">
-              {cheapestVisiblePrice ? `${formatPricePerLiter(cheapestVisiblePrice.price_per_liter_sek)} lägst` : "Inget matchar filtren"}
-            </p>
+          {venueFilter !== "all" && (
+            <button className="min-h-11 rounded-2xl bg-white/10 px-4 text-sm font-black text-foam hover:bg-white/[0.14]" type="button" onClick={() => setVenueFilter("all")}>
+              Alla
+            </button>
+          )}
+        </div>
+
+        {venueSummaries.length > 0 ? (
+          <div className="-mx-4 mt-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2">
+            {venueSummaries.map((summary) => (
+              <VenueCard
+                key={summary.venue.id}
+                summary={summary}
+                isSelected={venueFilter === summary.venue.id}
+                onSelect={() => selectVenue(summary.venue.id)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.06] p-5 text-center">
+            <h3 className="text-xl font-black text-foam">Inga ställen än</h3>
+            <p className="mt-2 text-sm font-semibold text-foam/60">När priser finns visas ställen här.</p>
+          </div>
+        )}
+      </section>
+
+      <section id="priser" className="mt-8 min-w-0 scroll-mt-24">
+        <div className="flex flex-col gap-3">
+          <p className="text-sm font-black uppercase tracking-normal text-malt">Prislistan</p>
+          <div className="flex min-w-0 items-end justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-3xl font-black text-foam">Billigast per liter</h2>
+              <p className="mt-2 text-sm font-semibold leading-6 text-foam/60">
+                {selectedVenueName ? `Filtrerat på ${selectedVenueName}.` : "Rankat för snabb mobilskanning."}
+              </p>
+            </div>
+            <div className="max-w-[9.5rem] shrink-0 rounded-3xl bg-white/[0.08] px-4 py-3 text-right ring-1 ring-white/10">
+              <p className="text-lg font-black text-foam">{resultLabel}</p>
+              <p className="text-xs font-bold text-foam/50">{cheapestVisiblePrice ? `${formatPricePerLiter(cheapestVisiblePrice.price_per_liter_sek)} lägst` : "Tomt"}</p>
+            </div>
           </div>
         </div>
 
-        <div className="sticky top-[57px] z-30 mt-8 rounded-lg border border-line bg-white/95 p-3 shadow-sm backdrop-blur">
-          <div className="grid gap-3 lg:grid-cols-[1.2fr_0.9fr_0.8fr_0.8fr]">
-            <label className="grid gap-2 text-sm font-black text-ink">
-              Sök
-              <input className={inputClass} value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Ställe, område eller öl" />
-            </label>
-            <label className="grid gap-2 text-sm font-black text-ink">
-              Sortera
+        <div className="sticky top-[76px] z-30 -mx-4 mt-5 border-y border-white/10 bg-night/[0.86] px-4 py-3 backdrop-blur-xl md:top-[76px] md:mx-0 md:rounded-[1.75rem] md:border">
+          <label className="block">
+            <span className="sr-only">Sök</span>
+            <input className={inputClass} value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Sök ställe, område eller öl" />
+          </label>
+
+          <div className="-mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1">
+            {priceTypeFilters.map((filter) => {
+              const isActive = priceTypeFilter === filter.value;
+
+              return (
+                <button
+                  key={filter.value}
+                  className={`min-h-11 shrink-0 rounded-full px-4 text-sm font-black ${
+                    isActive ? "bg-malt text-night" : "bg-white/[0.09] text-foam/60 ring-1 ring-white/10 hover:bg-white/[0.14]"
+                  }`}
+                  type="button"
+                  onClick={() => setPriceTypeFilter(filter.value)}
+                >
+                  {filter.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <label>
+              <span className="sr-only">Sortera</span>
               <select className={selectClass} value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
-                <option value="pricePerLiter">Billigast per liter</option>
-                <option value="venue">Serveringsställe A-Ö</option>
-                <option value="observedAt">Senast observerat</option>
+                <option value="pricePerLiter">Billigast/liter</option>
+                <option value="venue">Ställe A-Ö</option>
+                <option value="observedAt">Senast</option>
               </select>
             </label>
-            <label className="grid gap-2 text-sm font-black text-ink">
-              Pristyp
-              <select className={selectClass} value={priceTypeFilter} onChange={(event) => setPriceTypeFilter(event.target.value as PriceTypeFilter)}>
-                {priceTypeFilters.map((priceType) => (
-                  <option key={priceType} value={priceType}>
-                    {priceType === "all" ? "Alla typer" : priceTypeLabels[priceType]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-2 text-sm font-black text-ink">
-              Volym
+            <label>
+              <span className="sr-only">Volym</span>
               <select className={selectClass} value={volumeFilter} onChange={(event) => setVolumeFilter(event.target.value)}>
                 <option value="all">Alla volymer</option>
                 {volumeOptions.map((volume) => (
@@ -200,48 +367,51 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
               </select>
             </label>
           </div>
-          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <label className="flex items-center gap-3 text-sm font-bold text-ink">
+
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <label className="flex min-h-11 items-center gap-3 rounded-2xl bg-white/[0.06] px-3 text-sm font-bold text-foam/70">
               <input
-                className="size-4 accent-hop"
+                className="size-4 accent-malt"
                 type="checkbox"
                 checked={verifiedOnly}
                 onChange={(event) => setVerifiedOnly(event.target.checked)}
               />
-              Visa bara verifierade priser
+              Bara verifierade
             </label>
-            <button className="w-fit rounded-md border border-line bg-paper px-3 py-2 text-sm font-black text-ink hover:border-hop hover:text-hop" type="button" onClick={resetFilters}>
-              Rensa filter
-            </button>
+            {hasActiveFilters && (
+              <button className="min-h-11 rounded-2xl px-3 text-sm font-black text-malt hover:bg-white/10" type="button" onClick={resetFilters}>
+                Rensa filter
+              </button>
+            )}
           </div>
         </div>
 
         {visibleDataStatus === "fallback" && sortedPrices.length > 0 && (
-          <p className="mt-5 rounded-md border border-malt/50 bg-malt/10 px-4 py-3 text-sm font-bold text-ink/75">
-            Visar exempeldata tills aktuella verifierade priser finns tillgängliga.
+          <p className="mt-5 rounded-3xl border border-malt/30 bg-malt/10 px-4 py-3 text-sm font-bold text-foam/70">
+            Visar exempeldata tills aktuella priser finns.
           </p>
         )}
 
         {shouldShowLoading && (
-          <div className="mt-8 rounded-lg border border-line bg-foam p-6 text-center">
-            <h3 className="text-xl font-black text-ink">Laddar priser...</h3>
-            <p className="mt-2 text-ink/70">Prislistan visas strax.</p>
+          <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.06] p-6 text-center">
+            <h3 className="text-xl font-black text-foam">Laddar priser...</h3>
+            <p className="mt-2 text-foam/60">Prislistan visas strax.</p>
           </div>
         )}
 
         {!shouldShowLoading && visiblePrices.length === 0 && (
-          <div className="mt-8 rounded-lg border border-line bg-foam p-6 text-center">
-            <h3 className="text-xl font-black text-ink">Inga priser att visa ännu</h3>
-            <p className="mt-2 text-ink/70">Rapporterade och verifierade priser visas här när data finns tillgänglig.</p>
+          <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.06] p-6 text-center">
+            <h3 className="text-xl font-black text-foam">Inga priser än</h3>
+            <p className="mt-2 text-foam/60">Rapporterade priser visas här.</p>
           </div>
         )}
 
         {!shouldShowLoading && visiblePrices.length > 0 && sortedPrices.length === 0 && (
-          <div className="mt-8 rounded-lg border border-line bg-foam p-6 text-center">
-            <h3 className="text-xl font-black text-ink">Inget matchar filtren</h3>
-            <p className="mt-2 text-ink/70">Prova att bredda sökningen eller rensa filtren.</p>
+          <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.06] p-6 text-center">
+            <h3 className="text-xl font-black text-foam">Inga priser matchar filtret</h3>
+            <p className="mt-2 text-foam/60">Rensa filter eller sök bredare.</p>
             {hasActiveFilters && (
-              <button className="mt-4 rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink" type="button" onClick={resetFilters}>
+              <button className="mt-4 min-h-12 rounded-2xl bg-malt px-5 font-black text-night hover:bg-lager" type="button" onClick={resetFilters}>
                 Rensa filter
               </button>
             )}
@@ -249,87 +419,13 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
         )}
 
         {!shouldShowLoading && sortedPrices.length > 0 && (
-          <div className="mt-8 grid gap-4 lg:hidden">
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {sortedPrices.map((price, index) => (
-              <article key={price.id} className={`rounded-lg border p-4 shadow-sm ${index === 0 ? "border-malt bg-foam" : "border-line bg-white"}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <span className={`rounded-full px-3 py-1 text-xs font-black ${index === 0 ? "bg-night text-malt" : "bg-foam text-ink"}`}>
-                      {rankLabel(index)}
-                    </span>
-                    <h3 className="mt-3 text-xl font-black text-ink">{price.venue.name}</h3>
-                    <p className="mt-1 text-sm font-semibold text-ink/60">{getVenueLocation(price)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-3xl font-black text-hop">{formatSek(price.price_sek)}</p>
-                    <p className="text-sm font-bold text-ink/55">{price.volume_cl} cl</p>
-                  </div>
-                </div>
-
-                <div className="mt-5 rounded-md bg-paper p-3">
-                  <p className="text-sm font-black uppercase text-copper">Kr/liter</p>
-                  <p className="mt-1 text-3xl font-black text-ink">{formatPricePerLiter(price.price_per_liter_sek)}</p>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <span className={`rounded-full px-3 py-1 text-xs font-black ${priceTypeBadgeClass(price.price_type)}`}>{priceTypeLabels[price.price_type]}</span>
-                  <span className={`rounded-full px-3 py-1 text-xs font-black ${price.is_verified ? "bg-hop text-white" : "bg-white text-ink ring-1 ring-line"}`}>
-                    {price.is_verified ? "Verifierad" : "Väntar på verifiering"}
-                  </span>
-                </div>
-                <p className="mt-4 text-sm font-semibold text-ink/70">{price.beer_name}</p>
-                <p className="mt-1 text-sm text-ink/55">Observerat {formatDate(price.observed_at)}</p>
-              </article>
+              <PriceRankCard key={price.id} price={price} index={index} />
             ))}
           </div>
         )}
-
-        {!shouldShowLoading && sortedPrices.length > 0 && (
-          <div className="mt-8 hidden overflow-hidden rounded-lg border border-line bg-white lg:block">
-            <table className="w-full border-collapse text-left text-sm">
-              <thead className="bg-foam text-xs uppercase tracking-normal text-ink/65">
-                <tr>
-                  <th className="px-4 py-3">Rank</th>
-                  <th className="px-4 py-3">Serveringsställe</th>
-                  <th className="px-4 py-3">Öl/prisnamn</th>
-                  <th className="px-4 py-3">Pris</th>
-                  <th className="px-4 py-3">Volym</th>
-                  <th className="px-4 py-3">Kr/liter</th>
-                  <th className="px-4 py-3">Typ</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Observerat</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {sortedPrices.map((price, index) => (
-                  <tr key={price.id} className={index === 0 ? "bg-malt/10" : "hover:bg-foam/70"}>
-                    <td className="px-4 py-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-black ${index === 0 ? "bg-night text-malt" : "bg-foam text-ink"}`}>{rankLabel(index)}</span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <p className="font-black text-ink">{price.venue.name}</p>
-                      <p className="mt-1 text-xs font-semibold text-ink/55">{getVenueLocation(price)}</p>
-                    </td>
-                    <td className="px-4 py-4 font-semibold">{price.beer_name}</td>
-                    <td className="px-4 py-4 text-lg font-black">{formatSek(price.price_sek)}</td>
-                    <td className="px-4 py-4 font-bold">{price.volume_cl} cl</td>
-                    <td className="px-4 py-4 text-lg font-black text-hop">{formatPricePerLiter(price.price_per_liter_sek)}</td>
-                    <td className="px-4 py-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-black ${priceTypeBadgeClass(price.price_type)}`}>{priceTypeLabels[price.price_type]}</span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-black ${price.is_verified ? "bg-hop text-white" : "bg-white text-ink ring-1 ring-line"}`}>
-                        {price.is_verified ? "Verifierad" : "Ej verifierad"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 text-ink/60">{formatDate(price.observed_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </section>
+      </section>
+    </>
   );
 }

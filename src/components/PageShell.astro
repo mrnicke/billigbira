@@ -10,6 +10,12 @@ const { title, description } = Astro.props;
 const baseUrl = import.meta.env.BASE_URL;
 const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 const pageUrl = (path = "") => `${normalizedBaseUrl}${path.replace(/^\/+/, "")}`;
+const navItems = [
+  { href: pageUrl("#billigast"), label: "Billigast" },
+  { href: pageUrl("#stallen"), label: "Ställen" },
+  { href: pageUrl("#rapportera"), label: "Rapportera" },
+  { href: pageUrl("admin/"), label: "Admin" },
+];
 ---
 
 <!doctype html>
@@ -17,29 +23,41 @@ const pageUrl = (path = "") => `${normalizedBaseUrl}${path.replace(/^\/+/, "")}`
   <head>
     <meta charset="UTF-8" />
     <meta name="description" content={description} />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="generator" content={Astro.generator} />
     <title>{title}</title>
   </head>
-  <body class="bg-foam text-ink antialiased">
-    <header class="sticky top-0 z-40 border-b border-line/80 bg-paper/95 backdrop-blur">
-      <nav class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8" aria-label="Huvudmeny">
-        <a href={pageUrl()} class="flex items-center gap-2 text-base font-black tracking-normal text-ink sm:text-lg">
-          <span class="grid size-8 place-items-center rounded-md bg-night text-sm text-malt">BB</span>
-          <span>Billig Bira</span>
+  <body class="bg-night text-foam antialiased">
+    <header class="pt-safe fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-night/[0.86] backdrop-blur-xl">
+      <nav class="mx-auto flex max-w-md items-center justify-between gap-3 px-4 py-3 md:max-w-5xl md:px-6" aria-label="Huvudmeny">
+        <a href={pageUrl()} class="flex min-h-12 items-center gap-3 text-base font-black tracking-normal text-foam sm:text-lg">
+          <span class="grid size-10 place-items-center rounded-2xl bg-malt text-sm text-night shadow-soft">BB</span>
+          <span class="leading-tight">
+            Billig Bira
+            <span class="block text-xs font-bold text-foam/60">Norrköping</span>
+          </span>
         </a>
-        <div class="flex items-center gap-1 text-sm font-bold sm:gap-2">
-          <a href={pageUrl("#priser")} class="rounded-md px-2.5 py-2 text-ink/75 hover:bg-moss hover:text-ink sm:px-3">Priser</a>
-          <a href={pageUrl("#rapportera")} class="rounded-md px-2.5 py-2 text-ink/75 hover:bg-moss hover:text-ink sm:px-3">Rapportera</a>
-          <a href={pageUrl("admin/")} class="rounded-md bg-ink px-3 py-2 text-white hover:bg-hop">Admin</a>
+        <div class="hidden items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1 text-sm font-bold md:flex">
+          {navItems.map((item) => (
+            <a href={item.href} class="rounded-full px-4 py-2.5 text-foam/70 hover:bg-white/10 hover:text-foam">{item.label}</a>
+          ))}
         </div>
       </nav>
     </header>
     <slot />
-    <footer class="border-t border-white/10 bg-night px-4 py-8 text-sm text-white/75 sm:px-6 lg:px-8">
-      <div class="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p>Billig Bira samlar verifierade ölpriser i Norrköping.</p>
-        <a href={pageUrl("admin/")} class="font-semibold text-white hover:text-malt">Admin</a>
+    <nav class="pb-safe fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-night/[0.88] px-3 pt-2 shadow-app backdrop-blur-xl md:hidden" aria-label="Mobil huvudmeny">
+      <div class="mx-auto grid max-w-md grid-cols-4 gap-1">
+        {navItems.map((item) => (
+          <a href={item.href} class="grid min-h-12 place-items-center rounded-2xl px-1 text-center text-[0.72rem] font-black text-foam/70 hover:bg-white/10 hover:text-foam">
+            {item.label}
+          </a>
+        ))}
+      </div>
+    </nav>
+    <footer class="bg-night px-4 pb-28 pt-8 text-sm text-foam/60 sm:px-6 md:pb-8 lg:px-8">
+      <div class="mx-auto flex max-w-md flex-col gap-3 md:max-w-5xl md:flex-row md:items-center md:justify-between">
+        <p>Billig Bira samlar ölpriser i Norrköping.</p>
+        <a href={pageUrl("admin/")} class="font-semibold text-foam hover:text-malt">Admin</a>
       </div>
     </footer>
   </body>

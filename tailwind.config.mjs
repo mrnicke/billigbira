@@ -4,21 +4,24 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#151a17",
-        foam: "#f7f3e8",
-        paper: "#fffdf7",
-        malt: "#f3b33d",
-        hop: "#2f6f4e",
-        moss: "#dce8d7",
-        copper: "#b75f33",
-        night: "#111614",
-        line: "#ddd4c4"
+        ink: "#121614",
+        foam: "#f7f0df",
+        paper: "#fffaf0",
+        malt: "#f2b84b",
+        hop: "#49a078",
+        moss: "#dcead8",
+        copper: "#cc6f3d",
+        night: "#0d1110",
+        line: "#2a302d",
+        glass: "rgba(247, 240, 223, 0.1)",
+        lager: "#ffe1a1"
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"]
       },
       boxShadow: {
-        soft: "0 18px 45px rgba(16, 22, 21, 0.12)"
+        soft: "0 18px 45px rgba(4, 7, 6, 0.26)",
+        app: "0 24px 70px rgba(4, 7, 6, 0.42)"
       }
     }
   },

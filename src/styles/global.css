@@ -3,19 +3,34 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
-  background: #f8f4e8;
-  color: #17211b;
+  color-scheme: dark;
+  background: #0d1110;
+  color: #f7f0df;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: 88px;
 }
 
 body {
   min-width: 320px;
   margin: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@supports (padding: max(0px)) {
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .pt-safe {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+  }
 }
 
 button,
