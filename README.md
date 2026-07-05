@@ -1,6 +1,6 @@
 # Billig Bira
 
-Billig Bira är en publik svensk webbapp för att snabbt hitta billig öl i Norrköping. Appen är byggd som en statisk Astro/React-frontend för GitHub Pages och är förberedd för Supabase som databas, rapportflöde och framtida moderering.
+Billig Bira är en publik svensk webbapp för att snabbt hitta billig öl i Norrköping. Appen är byggd som en statisk Astro/React-frontend för GitHub Pages och använder Supabase för publik prislista, rapportflöde och adminmoderering.
 
 ## Stack
 
@@ -16,31 +16,31 @@ Billig Bira är en publik svensk webbapp för att snabbt hitta billig öl i Norr
 Installera beroenden:
 
 ```bash
-npm install
+pnpm install
 ```
 
 Starta utvecklingsserver:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Bygg statiskt:
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 Kör Astro/TypeScript-kontroll:
 
 ```bash
-npm run check
+pnpm run check
 ```
 
-På Windows/PowerShell kan `npm.cmd` användas om script-exekvering blockerar `npm`:
+På Windows/PowerShell kan `pnpm.cmd` användas:
 
 ```powershell
-npm.cmd run build
+pnpm.cmd run build
 ```
 
 ## Miljövariabler
@@ -52,51 +52,98 @@ PUBLIC_SUPABASE_URL=
 PUBLIC_SUPABASE_ANON_KEY=
 ```
 
-Om variablerna saknas bygger och fungerar appen fortsatt med lokal fallback-data. Lägg aldrig `service_role`, secret keys, tokens, lösenord eller backend-nycklar i frontendkod, `.env.example`, commits eller testoutput.
+Frontendklienten ska bara använda `PUBLIC_SUPABASE_URL` och `PUBLIC_SUPABASE_ANON_KEY`. Lägg aldrig `service_role`, secret keys, tokens, lösenord eller backend-nycklar i frontendkod, `.env.example`, commits eller testoutput.
 
 ## Supabase
 
 SQL-filer finns i `supabase/`:
 
-- `supabase/schema.sql` skapar tabellerna `venues`, `beer_prices` och `price_reports`, constraints, index och RLS-policies.
+- `supabase/schema.sql` skapar tabellerna `venues`, `beer_prices` och `price_reports`, constraints, index och grundläggande RLS-policies.
 - `supabase/seed.sql` lägger in tydlig exempeldata för Norrköping.
+- `supabase/admin-moderation.sql` lägger till adminmodell, reviewfält, admin-RLS och RPC-funktioner för godkänn/avvisa.
 
 Kör filerna i Supabase SQL Editor i denna ordning:
 
 1. `supabase/schema.sql`
 2. `supabase/seed.sql`
+3. `supabase/admin-moderation.sql`
 
-Den publika frontendklienten ska bara använda `PUBLIC_SUPABASE_URL` och `PUBLIC_SUPABASE_ANON_KEY`. Läsning styrs av RLS: publika besökare kan läsa aktiva ställen och verifierade priser. Rapporter kan skickas in som `pending`, men det finns ingen publik policy för att läsa eller moderera rapporter.
+`admin-moderation.sql` använder inte service role key i frontend. Adminrättighet ligger i databasen via `public.admin_users`, Supabase Auth och RLS.
 
-### Supabase-verifiering
+## Adminflöde
 
-Använd denna checklista när Supabase-kopplingen verifieras lokalt och i GitHub Pages-builden:
+Adminvyn finns på `/admin`. Den använder Supabase Auth med e-post och lösenord. En inloggad användare måste dessutom finnas i `public.admin_users`; enbart frontendkontroller räcker inte och ger inte adminåtkomst.
 
-- Kör `supabase/schema.sql` i Supabase SQL Editor.
-- Kör `supabase/seed.sql` efter schemat.
-- Skapa lokal `.env` eller `.env.local` med `PUBLIC_SUPABASE_URL` och `PUBLIC_SUPABASE_ANON_KEY`.
-- Lägg in samma namn som GitHub Actions repository variables.
-- Säkerställ att `.github/workflows/deploy.yml` exponerar `vars.PUBLIC_SUPABASE_URL` och `vars.PUBLIC_SUPABASE_ANON_KEY` till Astro-buildens `env`.
-- Kör `pnpm.cmd run build`.
-- Kontrollera att startsidan visar Supabase-data i stället för exempeldata.
-- Skicka en testrapport via formuläret.
-- Kontrollera att rapporten finns som `pending` i tabellen `price_reports` i Supabase Table Editor.
+Admin kan:
+
+- läsa pending reports i `price_reports`
+- godkänna en rapport via `approve_price_report(report_id)`
+- avvisa en rapport via `reject_price_report(report_id, review_reason)`
+
+Godkännande skapar en verifierad rad i `beer_prices`, markerar rapporten som `approved`, sätter reviewfält och länkar rapporten till det skapade priset. Om rapporten saknar `venue_id` matchas först aktivt ställe på namn; annars skapas ett aktivt ställe med slug från rapportens ställenamn.
+
+Avslag markerar rapporten som `rejected` och sparar reviewfält. Avvisade rapporter visas inte publikt.
+
+### Skapa adminanvändare
+
+1. Skapa en användare i Supabase Dashboard under Authentication.
+2. Kopiera användarens `id`.
+3. Kör detta i Supabase SQL Editor:
+
+```sql
+insert into public.admin_users (user_id)
+values ('AUTH_USER_ID_HERE')
+on conflict (user_id) do nothing;
+```
+
+Användarens e-post behöver inte hårdkodas i schema eller frontend.
+
+## Testa adminmoderering
+
+1. Skicka en rapport publikt via formuläret.
+2. Kontrollera i Supabase att rapporten finns i `price_reports` med `status = 'pending'`.
+3. Logga in på `/admin` med Supabase Auth-kontot som finns i `admin_users`.
+4. Godkänn rapporten.
+5. Kontrollera att en verifierad rad skapats i `beer_prices` och att priset syns i publika listan.
+6. Skicka en ny rapport och avvisa den.
+7. Kontrollera att rapporten fått `status = 'rejected'` och inte syns publikt.
 
 ## Dataflöde
 
 Appens kärntyper finns i `src/lib/types.ts`.
 
-Data hämtas via `src/lib/data/prices.ts`:
+Publik data hämtas via `src/lib/data/prices.ts`:
 
 - `getVenues()`
 - `getBeerPrices()`
 - `submitPriceReport()`
 
-När Supabase saknar konfiguration används fallback-data från `src/data/beerPrices.ts`. Pris per liter beräknas konsekvent som:
+Adminlogik ligger separat i `src/lib/data/admin.ts`:
+
+- `getCurrentUser()`
+- `signInAdmin()`
+- `signOutAdmin()`
+- `getPendingReports()`
+- `approveReport()`
+- `rejectReport()`
+
+När Supabase saknar konfiguration används fallback-data från `src/data/beerPrices.ts` för den publika listan. Adminflödet kräver Supabase-konfiguration.
+
+Pris per liter beräknas konsekvent som:
 
 ```ts
 price_sek / (volume_cl / 100)
 ```
+
+## Säkerhet
+
+- Ingen service role key används i frontend.
+- Publika besökare kan läsa aktiva ställen och verifierade priser.
+- Publika besökare kan skapa pending reports.
+- Publika besökare kan inte läsa alla pending reports.
+- Publika besökare kan inte skriva direkt till `beer_prices`.
+- Admin skyddas med Supabase Auth, `admin_users`, RLS och server-side SQL-funktioner.
+- Frontendkontroller är bara UX och ska inte betraktas som säkerhet.
 
 ## GitHub Pages
 
@@ -112,4 +159,6 @@ Workflow finns i `.github/workflows/deploy.yml`. Deploy sker via GitHub Actions 
 
 ## Nästa steg
 
-- Bygg admin-auth och moderering server-side med RLS och tydliga roller innan någon adminfunktion exponeras.
+- Lägg till adminval för att koppla rapporter till befintliga ställen innan godkännande.
+- Lägg till avvisningsorsak i UI om den ska användas operativt.
+- Lägg till auditvy för redan hanterade rapporter.

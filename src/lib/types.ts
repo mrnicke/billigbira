@@ -40,6 +40,10 @@ export type PriceReport = {
   observed_at?: string | null;
   reporter_note?: string | null;
   status: ReportStatus;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  rejection_reason?: string | null;
+  approved_price_id?: string | null;
   created_at: string;
 };
 
@@ -47,3 +51,9 @@ export type NewPriceReport = Pick<
   PriceReport,
   "venue_id" | "venue_name" | "beer_name" | "volume_cl" | "price_sek" | "price_type" | "observed_at" | "reporter_note"
 >;
+
+export type AdminUser = {
+  user_id: string;
+  created_at: string;
+  created_by?: string | null;
+};
