@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ComponentProps } from "react";
+import { beerStyleLabels, getActiveBeers } from "../lib/data/beers";
 import {
   approveReport,
   deactivateBeerPrice,
@@ -17,7 +18,7 @@ import {
   type AdminReportStatusFilter,
 } from "../lib/data/admin";
 import { calculatePricePerLiter, formatPricePerLiter, formatSek } from "../lib/pricing";
-import type { PriceType, ReportStatus, Venue } from "../lib/types";
+import type { BeerCatalogItem, PriceType, ReportStatus, Venue } from "../lib/types";
 
 type AuthState = "checking" | "signedOut" | "signedIn";
 type Feedback = {
@@ -26,11 +27,14 @@ type Feedback = {
 };
 type FormSubmitEvent = Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0];
 type VenueMode = "existing" | "new";
+type BeerMode = "catalog" | "free";
 
 type ReportEditState = {
   venueMode: VenueMode;
   venueId: string;
   venueName: string;
+  beerMode: BeerMode;
+  beerId: string;
   beerName: string;
   priceSek: string;
   volumeCl: string;
@@ -55,9 +59,9 @@ const priceTypeLabels: Record<PriceType, string> = {
 };
 
 const statusLabels: Record<ReportStatus, string> = {
-  pending: "Pending",
-  approved: "Approved",
-  rejected: "Rejected",
+  pending: "Väntar",
+  approved: "Godkänd",
+  rejected: "Avvisad",
 };
 
 const statusFilters: AdminReportStatusFilter[] = ["pending", "approved", "rejected", "all"];
@@ -72,6 +76,7 @@ const rejectionReasons = [
 
 const inputClass = "rounded-md border border-black/15 bg-white px-3 py-3 font-medium text-ink";
 const labelClass = "grid gap-2 text-sm font-bold text-ink";
+const freeBeerOptionValue = "__free__";
 
 function parsePositiveDecimal(value: string): number | null {
   const parsed = Number(value.replace(",", "."));
@@ -146,11 +151,25 @@ function getVenueDetailText(report: AdminPriceReport) {
   return "Skapar nytt ställe vid godkännande";
 }
 
+function getBeerBadgeText(report: AdminPriceReport) {
+  return report.beer_id ? "Katalogöl" : "Okopplad öl";
+}
+
+function getBeerDetailText(report: AdminPriceReport) {
+  if (report.beer) {
+    return `${report.beer.name} · ${beerStyleLabels[report.beer.style]}`;
+  }
+
+  return "Saknar katalogkoppling";
+}
+
 function makeInitialEditState(report: AdminPriceReport): ReportEditState {
   return {
     venueMode: report.venue_id ? "existing" : "new",
     venueId: report.venue_id ?? "",
     venueName: report.venue?.name || report.venue_name,
+    beerMode: report.beer_id ? "catalog" : "free",
+    beerId: report.beer_id ?? "",
     beerName: report.beer_name,
     priceSek: decimalValue(report.price_sek),
     volumeCl: decimalValue(report.volume_cl),
@@ -191,6 +210,7 @@ export default function AdminReports() {
     rejected: 0,
   });
   const [venues, setVenues] = useState<Venue[]>([]);
+  const [beers, setBeers] = useState<BeerCatalogItem[]>([]);
   const [adminPrices, setAdminPrices] = useState<AdminBeerPrice[]>([]);
   const [editStates, setEditStates] = useState<Record<string, ReportEditState>>({});
   const [rejectStates, setRejectStates] = useState<Record<string, RejectState>>({});
@@ -211,17 +231,19 @@ export default function AdminReports() {
     setIsLoadingReports(true);
     setFeedback(null);
 
-    const [reportsResult, countsResult, venuesResult, pricesResult] = await Promise.all([
+    const [reportsResult, countsResult, venuesResult, pricesResult, beersResult] = await Promise.all([
       getReportsByStatus(status),
       getReportStatusCounts(),
       getAdminVenues(),
       getAdminBeerPrices(),
+      getActiveBeers(),
     ]);
 
     setReports(reportsResult.reports);
     setReportCounts(countsResult.counts);
     setVenues(venuesResult.venues);
     setAdminPrices(pricesResult.prices);
+    setBeers(beersResult);
     setEditStates((current) => {
       const next = { ...current };
 
@@ -325,7 +347,9 @@ export default function AdminReports() {
 
   function validateReportEdit(report: AdminPriceReport, edit: ReportEditState) {
     const selectedVenue = edit.venueMode === "existing" ? venues.find((venue) => venue.id === edit.venueId) : null;
+    const selectedBeer = edit.beerMode === "catalog" ? beers.find((beer) => beer.id === edit.beerId) : null;
     const venueName = edit.venueMode === "existing" ? selectedVenue?.name ?? "" : edit.venueName.trim();
+    const beerName = edit.beerMode === "catalog" ? selectedBeer?.name ?? "" : edit.beerName.trim();
     const price = parsePositiveDecimal(edit.priceSek);
     const volume = parsePositiveDecimal(edit.volumeCl);
 
@@ -333,8 +357,12 @@ export default function AdminReports() {
       return { ok: false as const, message: "Serveringsställe krävs." };
     }
 
-    if (!edit.beerName.trim()) {
-      return { ok: false as const, message: "Öl/prisnamn krävs." };
+    if (edit.beerMode === "catalog" && !selectedBeer) {
+      return { ok: false as const, message: "Välj katalogöl eller behåll som okopplad öl." };
+    }
+
+    if (!beerName) {
+      return { ok: false as const, message: "Ölnamn krävs." };
     }
 
     if (price == null) {
@@ -354,7 +382,8 @@ export default function AdminReports() {
       overrides: {
         venue_id: selectedVenue?.id ?? null,
         venue_name: venueName,
-        beer_name: edit.beerName,
+        beer_id: selectedBeer?.id ?? null,
+        beer_name: beerName,
         volume_cl: volume,
         price_sek: price,
         price_type: edit.priceType,
@@ -543,6 +572,7 @@ export default function AdminReports() {
                   key={report.id}
                   report={report}
                   venues={venues}
+                  beers={beers}
                   edit={editStates[report.id] ?? makeInitialEditState(report)}
                   rejectState={rejectStates[report.id] ?? makeInitialRejectState()}
                   isBusy={actionReportId === report.id}
@@ -591,7 +621,7 @@ export default function AdminReports() {
                       </span>
                     </div>
                     <p className="text-sm font-semibold text-ink/70">
-                      {price.beer_name} · {formatSek(price.price_sek)} · {price.volume_cl} cl · {formatPricePerLiter(price.price_per_liter_sek)} ·{" "}
+                      {price.beer?.name || price.beer_name} · {formatSek(price.price_sek)} · {price.volume_cl} cl · {formatPricePerLiter(price.price_per_liter_sek)} ·{" "}
                       {priceTypeLabels[price.price_type]} · observerat {formatDate(price.observed_at)}
                     </p>
                   </div>
@@ -618,6 +648,7 @@ export default function AdminReports() {
 function PendingReportCard({
   report,
   venues,
+  beers,
   edit,
   rejectState,
   isBusy,
@@ -628,6 +659,7 @@ function PendingReportCard({
 }: {
   report: AdminPriceReport;
   venues: Venue[];
+  beers: BeerCatalogItem[];
   edit: ReportEditState;
   rejectState: RejectState;
   isBusy: boolean;
@@ -637,6 +669,7 @@ function PendingReportCard({
   onReject: () => void;
 }) {
   const selectedVenue = venues.find((venue) => venue.id === edit.venueId) ?? null;
+  const selectedBeer = beers.find((beer) => beer.id === edit.beerId) ?? null;
   const price = parsePositiveDecimal(edit.priceSek);
   const volume = parsePositiveDecimal(edit.volumeCl);
   const calculatedPricePerLiter = price != null && volume != null ? calculatePricePerLiter(price, volume) : null;
@@ -648,10 +681,12 @@ function PendingReportCard({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-2xl font-black text-ink">{getVenueDisplayName(report)}</h3>
             <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">{getVenueBadgeText(report)}</span>
+            <span className={`rounded-full px-3 py-1 text-xs font-black ${report.beer_id ? "bg-hop text-white" : "bg-copper text-white"}`}>{getBeerBadgeText(report)}</span>
             <span className={`rounded-full px-3 py-1 text-xs font-black ${statusBadgeClass(report.status)}`}>{statusLabels[report.status]}</span>
           </div>
           <p className="mt-1 text-sm font-semibold text-ink/60">Rapporterad {formatDate(report.created_at)}</p>
           <p className="mt-1 text-sm font-semibold text-ink/60">{getVenueDetailText(report)}</p>
+          <p className="mt-1 text-sm font-semibold text-ink/60">{getBeerDetailText(report)}</p>
         </div>
       </div>
 
@@ -690,11 +725,43 @@ function PendingReportCard({
           )}
         </fieldset>
 
-        <label className={labelClass}>
-          Öl/prisnamn
-          <input className={inputClass} value={edit.beerName} onChange={(event) => onEdit({ beerName: event.target.value })} />
-          <OriginalValue show={changedText(edit.beerName, report.beer_name)} value={report.beer_name} />
-        </label>
+        <fieldset className="grid gap-3 rounded-md bg-white p-3 lg:col-span-2">
+          <legend className="px-1 text-sm font-black text-ink">Öl</legend>
+          <label className={labelClass}>
+            Katalogkoppling
+            <select
+              className={inputClass}
+              value={edit.beerMode === "free" ? freeBeerOptionValue : edit.beerId}
+              onChange={(event) => {
+                if (event.target.value === freeBeerOptionValue) {
+                  onEdit({ beerMode: "free", beerId: "", beerName: report.beer_name });
+                  return;
+                }
+
+                const beer = beers.find((item) => item.id === event.target.value);
+                onEdit({ beerMode: "catalog", beerId: event.target.value, beerName: beer?.name ?? edit.beerName });
+              }}
+            >
+              <option value="">Välj katalogöl</option>
+              {beers.map((beer) => (
+                <option key={beer.id} value={beer.id}>
+                  {beer.name} · {beerStyleLabels[beer.style]}
+                </option>
+              ))}
+              <option value={freeBeerOptionValue}>Behåll som okopplad öl</option>
+            </select>
+            <OriginalValue show={changedText(selectedBeer?.name, report.beer?.name || report.beer_name)} value={report.beer?.name || report.beer_name} />
+          </label>
+          {edit.beerMode === "free" ? (
+            <label className={labelClass}>
+              Okopplat ölnamn
+              <input className={inputClass} value={edit.beerName} onChange={(event) => onEdit({ beerName: event.target.value })} />
+              <span className="text-xs font-semibold text-copper">Rapporten kan godkännas, men priset saknar katalogkoppling.</span>
+            </label>
+          ) : (
+            selectedBeer && <p className="rounded-md bg-foam px-3 py-2 text-sm font-semibold text-ink/70">{beerStyleLabels[selectedBeer.style]} {selectedBeer.brewery ? `· ${selectedBeer.brewery}` : ""}</p>
+          )}
+        </fieldset>
         <label className={labelClass}>
           Pris i kronor
           <input className={inputClass} inputMode="decimal" value={edit.priceSek} onChange={(event) => onEdit({ priceSek: event.target.value })} />
@@ -782,9 +849,10 @@ function HistoryReportCard({ report }: { report: AdminPriceReport }) {
             <h3 className="text-xl font-black text-ink">{getVenueDisplayName(report)}</h3>
             <span className={`rounded-full px-3 py-1 text-xs font-black ${statusBadgeClass(report.status)}`}>{statusLabels[report.status]}</span>
             <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">{getVenueBadgeText(report)}</span>
+            <span className={`rounded-full px-3 py-1 text-xs font-black ${report.beer_id ? "bg-hop text-white" : "bg-copper text-white"}`}>{getBeerBadgeText(report)}</span>
           </div>
           <p className="mt-2 text-sm font-semibold text-ink/70">
-            {report.beer_name} · {formatSek(report.price_sek)} · {report.volume_cl} cl · {formatPricePerLiter(report.price_per_liter_sek)} ·{" "}
+            {report.beer?.name || report.beer_name} · {formatSek(report.price_sek)} · {report.volume_cl} cl · {formatPricePerLiter(report.price_per_liter_sek)} ·{" "}
             {priceTypeLabels[report.price_type]}
           </p>
           <p className="mt-1 text-sm text-ink/60">

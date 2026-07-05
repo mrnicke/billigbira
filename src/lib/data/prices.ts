@@ -1,14 +1,14 @@
-import { fallbackBeerPrices, fallbackVenues } from "../../data/beerPrices";
 import { calculatePricePerLiter } from "../pricing";
 import { isSupabaseConfigured, supabase } from "../supabase";
-import type { BeerPrice, NewPriceReport, Venue } from "../types";
+import type { BeerCatalogItem, BeerPrice, NewPriceReport, Venue } from "../types";
 
 export type BeerPriceListItem = BeerPrice & {
   venue: Venue;
+  beer: BeerCatalogItem | null;
   price_per_liter_sek: number;
 };
 
-export type PriceDataStatus = "supabase" | "fallback";
+export type PriceDataStatus = "supabase" | "empty";
 
 export type BeerPriceListResult = {
   prices: BeerPriceListItem[];
@@ -17,6 +17,7 @@ export type BeerPriceListResult = {
 
 type BeerPriceWithVenueRow = BeerPrice & {
   venues: Venue | Venue[] | null;
+  beer_catalog?: BeerCatalogItem | BeerCatalogItem[] | null;
 };
 
 type SubmitPriceReportResult = {
@@ -40,26 +41,6 @@ function withCalculatedPrice(price: BeerPrice): BeerPrice & { price_per_liter_se
   };
 }
 
-function fallbackListItems(): BeerPriceListItem[] {
-  const venuesById = new Map(fallbackVenues.map((venue) => [venue.id, venue]));
-
-  return fallbackBeerPrices
-    .map((price) => {
-      const venue = venuesById.get(price.venue_id);
-
-      if (!venue) {
-        return null;
-      }
-
-      return {
-        ...withCalculatedPrice(price),
-        venue,
-      };
-    })
-    .filter((price): price is BeerPriceListItem => price !== null)
-    .sort((a, b) => a.price_per_liter_sek - b.price_per_liter_sek);
-}
-
 function normalizeJoinedVenue(venue: Venue | Venue[] | null): Venue | null {
   if (Array.isArray(venue)) {
     return venue[0] ?? null;
@@ -68,16 +49,24 @@ function normalizeJoinedVenue(venue: Venue | Venue[] | null): Venue | null {
   return venue;
 }
 
+function normalizeJoinedBeer(beer: BeerCatalogItem | BeerCatalogItem[] | null | undefined): BeerCatalogItem | null {
+  if (Array.isArray(beer)) {
+    return beer[0] ?? null;
+  }
+
+  return beer ?? null;
+}
+
 export async function getVenues(): Promise<Venue[]> {
   if (!isSupabaseConfigured || !supabase) {
-    return fallbackVenues;
+    return [];
   }
 
   const { data, error } = await supabase.from("venues").select("*").eq("is_active", true).order("name");
 
   if (error || !data) {
-    console.warn("Using fallback venues because Supabase venues could not be loaded.");
-    return fallbackVenues;
+    console.warn("Venues could not be loaded.");
+    return [];
   }
 
   return data as Venue[];
@@ -85,16 +74,17 @@ export async function getVenues(): Promise<Venue[]> {
 
 export async function getBeerPriceList(): Promise<BeerPriceListResult> {
   if (!isSupabaseConfigured || !supabase) {
+    if (import.meta.env.DEV) {
+      console.info("Billig Bira: Supabase saknas, visar tom publik prislista.");
+    }
+
     return {
-      prices: fallbackListItems(),
-      status: "fallback",
+      prices: [],
+      status: "empty",
     };
   }
 
-  const { data, error } = await supabase
-    .from("beer_prices")
-    .select(
-      `
+  const baseSelect = `
         id,
         venue_id,
         beer_name,
@@ -117,24 +107,79 @@ export async function getBeerPriceList(): Promise<BeerPriceListResult> {
           is_active,
           created_at
         )
-      `,
-    )
+      `;
+  const catalogSelect = `
+        id,
+        venue_id,
+        beer_id,
+        beer_name,
+        volume_cl,
+        price_sek,
+        price_per_liter_sek,
+        price_type,
+        observed_at,
+        source,
+        is_verified,
+        is_active,
+        created_at,
+        venues:venue_id (
+          id,
+          name,
+          slug,
+          city,
+          district,
+          address,
+          is_active,
+          created_at
+        ),
+        beer_catalog:beer_id (
+          id,
+          name,
+          slug,
+          style,
+          brand,
+          brewery,
+          is_generic,
+          is_active,
+          sort_order,
+          created_at
+        )
+      `;
+
+  const catalogResult = await supabase
+    .from("beer_prices")
+    .select(catalogSelect)
     .eq("is_verified", true)
     .eq("is_active", true)
     .order("price_per_liter_sek", { ascending: true });
+  let data: unknown[] | null = catalogResult.data;
+  let error = catalogResult.error;
+
+  if (error) {
+    const legacyResult = await supabase
+      .from("beer_prices")
+      .select(baseSelect)
+      .eq("is_verified", true)
+      .eq("is_active", true)
+      .order("price_per_liter_sek", { ascending: true });
+
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
 
   if (error || !data) {
-    console.warn("Using fallback prices because Supabase prices could not be loaded.");
+    console.warn("Prices could not be loaded.");
     return {
-      prices: fallbackListItems(),
-      status: "fallback",
+      prices: [],
+      status: "empty",
     };
   }
 
   const prices = (data as unknown as BeerPriceWithVenueRow[])
     .map((price) => {
-      const { venues, ...beerPrice } = price;
+      const { venues, beer_catalog, ...beerPrice } = price;
       const venue = normalizeJoinedVenue(venues);
+      const beer = normalizeJoinedBeer(beer_catalog);
 
       if (!venue?.is_active) {
         return null;
@@ -143,6 +188,7 @@ export async function getBeerPriceList(): Promise<BeerPriceListResult> {
       return {
         ...withCalculatedPrice(beerPrice),
         venue,
+        beer,
       };
     })
     .filter((price): price is BeerPriceListItem => price !== null)
@@ -167,6 +213,7 @@ export async function submitPriceReport(report: NewPriceReport): Promise<SubmitP
   const { error } = await supabase.from("price_reports").insert({
     venue_id: report.venue_id || null,
     venue_name: report.venue_name.trim(),
+    beer_id: report.beer_id || null,
     beer_name: report.beer_name.trim(),
     volume_cl: Number(report.volume_cl),
     price_sek: Number(report.price_sek),

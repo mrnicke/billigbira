@@ -1,11 +1,12 @@
 import type { User } from "@supabase/supabase-js";
 import { calculatePricePerLiter } from "../pricing";
 import { isSupabaseConfigured, supabase } from "../supabase";
-import type { BeerPrice, PriceReport, PriceType, ReportStatus, Venue } from "../types";
+import type { BeerCatalogItem, BeerPrice, PriceReport, PriceType, ReportStatus, Venue } from "../types";
 
 export type AdminPriceReport = PriceReport & {
   price_per_liter_sek: number;
   venue: { id: string; name: string } | null;
+  beer: BeerCatalogItem | null;
 };
 
 export type AdminReportStatusFilter = ReportStatus | "all";
@@ -13,6 +14,7 @@ export type AdminReportStatusFilter = ReportStatus | "all";
 export type AdminReportOverrides = {
   venue_id: string | null;
   venue_name: string;
+  beer_id: string | null;
   beer_name: string;
   volume_cl: number;
   price_sek: number;
@@ -23,6 +25,7 @@ export type AdminReportOverrides = {
 
 export type AdminBeerPrice = BeerPrice & {
   venue: Venue;
+  beer: BeerCatalogItem | null;
   price_per_liter_sek: number;
 };
 
@@ -57,10 +60,12 @@ type AdminBeerPricesResult = {
 
 type PriceReportWithVenueRow = PriceReport & {
   venues: { id: string; name: string } | { id: string; name: string }[] | null;
+  beer_catalog?: BeerCatalogItem | BeerCatalogItem[] | null;
 };
 
 type BeerPriceWithVenueRow = BeerPrice & {
   venues: Venue | Venue[] | null;
+  beer_catalog?: BeerCatalogItem | BeerCatalogItem[] | null;
 };
 
 const emptyReportStatusCounts: Record<ReportStatus, number> = {
@@ -110,10 +115,18 @@ function normalizeJoinedAdminVenue(venue: BeerPriceWithVenueRow["venues"]): Venu
   return venue;
 }
 
+function normalizeJoinedBeer(beer: BeerCatalogItem | BeerCatalogItem[] | null | undefined): BeerCatalogItem | null {
+  if (Array.isArray(beer)) {
+    return beer[0] ?? null;
+  }
+
+  return beer ?? null;
+}
+
 function normalizeReport(report: PriceReportWithVenueRow): AdminPriceReport {
   const priceSek = Number(report.price_sek);
   const volumeCl = Number(report.volume_cl);
-  const { venues, ...priceReport } = report;
+  const { venues, beer_catalog, ...priceReport } = report;
 
   return {
     ...priceReport,
@@ -121,6 +134,7 @@ function normalizeReport(report: PriceReportWithVenueRow): AdminPriceReport {
     volume_cl: volumeCl,
     price_per_liter_sek: calculatePricePerLiter(priceSek, volumeCl),
     venue: normalizeJoinedVenue(venues),
+    beer: normalizeJoinedBeer(beer_catalog),
   };
 }
 
@@ -128,7 +142,7 @@ function normalizeAdminBeerPrice(price: BeerPriceWithVenueRow): AdminBeerPrice |
   const priceSek = Number(price.price_sek);
   const volumeCl = Number(price.volume_cl);
   const storedPricePerLiter = price.price_per_liter_sek == null ? null : Number(price.price_per_liter_sek);
-  const { venues, ...beerPrice } = price;
+  const { venues, beer_catalog, ...beerPrice } = price;
   const venue = normalizeJoinedAdminVenue(venues);
 
   if (!venue) {
@@ -145,6 +159,7 @@ function normalizeAdminBeerPrice(price: BeerPriceWithVenueRow): AdminBeerPrice |
         : calculatePricePerLiter(priceSek, volumeCl),
     is_active: beerPrice.is_active ?? true,
     venue,
+    beer: normalizeJoinedBeer(beer_catalog),
   };
 }
 
@@ -342,6 +357,7 @@ export async function getReportsByStatus(status: AdminReportStatusFilter = "pend
         id,
         venue_id,
         venue_name,
+        beer_id,
         beer_name,
         volume_cl,
         price_sek,
@@ -357,6 +373,18 @@ export async function getReportsByStatus(status: AdminReportStatusFilter = "pend
         venues:venue_id (
           id,
           name
+        ),
+        beer_catalog:beer_id (
+          id,
+          name,
+          slug,
+          style,
+          brand,
+          brewery,
+          is_generic,
+          is_active,
+          sort_order,
+          created_at
         )
       `,
     )
@@ -400,6 +428,7 @@ export async function approveReport(reportId: string, overrides: AdminReportOver
     override_venue_id: overrides.venue_id,
     override_venue_name: overrides.venue_name.trim(),
     override_beer_name: overrides.beer_name.trim(),
+    override_beer_id: overrides.beer_id,
     override_volume_cl: Number(overrides.volume_cl),
     override_price_sek: Number(overrides.price_sek),
     override_price_type: overrides.price_type,
@@ -470,6 +499,7 @@ export async function getAdminBeerPrices(): Promise<AdminBeerPricesResult> {
       `
         id,
         venue_id,
+        beer_id,
         beer_name,
         volume_cl,
         price_sek,
@@ -488,6 +518,18 @@ export async function getAdminBeerPrices(): Promise<AdminBeerPricesResult> {
           district,
           address,
           is_active,
+          created_at
+        ),
+        beer_catalog:beer_id (
+          id,
+          name,
+          slug,
+          style,
+          brand,
+          brewery,
+          is_generic,
+          is_active,
+          sort_order,
           created_at
         )
       `,

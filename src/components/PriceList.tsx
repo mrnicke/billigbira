@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { getBeerPriceList, type BeerPriceListItem, type PriceDataStatus } from "../lib/data/prices";
+import { beerStyleLabels } from "../lib/data/beers";
+import { getBeerPriceList, type BeerPriceListItem } from "../lib/data/prices";
 import { formatPricePerLiter, formatSek } from "../lib/pricing";
-import type { PriceType, Venue } from "../lib/types";
+import type { BeerStyle, PriceType, Venue } from "../lib/types";
 
 type SortMode = "pricePerLiter" | "venue" | "observedAt";
 type PriceTypeFilter = "all" | PriceType;
+type BeerStyleFilter = "all" | BeerStyle;
 type VolumeFilter = "all" | string;
 
 type Props = {
   prices: BeerPriceListItem[];
-  dataStatus?: PriceDataStatus;
 };
 
 type VenueSummary = {
@@ -35,6 +36,14 @@ const priceTypeFilters: Array<{ value: PriceTypeFilter; label: string }> = [
   { value: "student", label: "Student" },
 ];
 
+const beerStyleFilters: Array<{ value: BeerStyleFilter; label: string }> = [
+  { value: "all", label: "Alla öl" },
+  { value: "lager", label: "Lager" },
+  { value: "ipa", label: "IPA" },
+  { value: "pilsner", label: "Pilsner" },
+  { value: "annan", label: "Annan" },
+];
+
 const inputClass =
   "min-h-12 w-full rounded-2xl border border-white/10 bg-white/[0.08] px-4 text-base font-bold text-foam outline-none placeholder:text-foam/30 focus:border-malt focus:ring-2 focus:ring-malt/20";
 const selectClass =
@@ -42,6 +51,10 @@ const selectClass =
 
 function getVenueLocation(price: BeerPriceListItem) {
   return price.venue.district || price.venue.address || price.venue.city;
+}
+
+function getBeerDisplayName(price: BeerPriceListItem) {
+  return price.beer?.name || price.beer_name;
 }
 
 function formatDate(value: string) {
@@ -100,7 +113,7 @@ function VenueCard({ summary, isSelected, onSelect }: { summary: VenueSummary; i
         <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-black text-foam/60">{summary.priceCount}</span>
       </div>
       <p className="mt-4 text-2xl font-black text-lager">{formatPricePerLiter(summary.bestPrice.price_per_liter_sek)}</p>
-      <p className="mt-1 text-sm font-bold text-foam/60">Bäst här: {summary.bestPrice.beer_name}</p>
+      <p className="mt-1 text-sm font-bold text-foam/60">Bäst här: {getBeerDisplayName(summary.bestPrice)}</p>
       <p className="mt-3 text-xs font-bold text-foam/40">Senast {formatDate(summary.latestObserved)}</p>
     </button>
   );
@@ -128,7 +141,10 @@ function PriceRankCard({ price, index }: { price: BeerPriceListItem; index: numb
 
       <div className="mt-4 flex items-end justify-between gap-3 rounded-3xl bg-night/50 p-3 ring-1 ring-white/[0.08]">
         <div className="min-w-0">
-          <p className="truncate text-sm font-black text-foam">{price.beer_name}</p>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-black text-foam">{getBeerDisplayName(price)}</p>
+            {price.beer && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[0.68rem] font-black text-foam/55">{beerStyleLabels[price.beer.style]}</span>}
+          </div>
           <p className="mt-1 text-xs font-semibold text-foam/50">Observerat {formatDate(price.observed_at)}</p>
         </div>
         <p className="shrink-0 text-right text-lg font-black text-foam">
@@ -146,16 +162,16 @@ function PriceRankCard({ price, index }: { price: BeerPriceListItem; index: numb
   );
 }
 
-export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
+export default function PriceList({ prices }: Props) {
   const [sortMode, setSortMode] = useState<SortMode>("pricePerLiter");
   const [searchTerm, setSearchTerm] = useState("");
   const [priceTypeFilter, setPriceTypeFilter] = useState<PriceTypeFilter>("all");
+  const [beerStyleFilter, setBeerStyleFilter] = useState<BeerStyleFilter>("all");
   const [volumeFilter, setVolumeFilter] = useState<VolumeFilter>("all");
   const [venueFilter, setVenueFilter] = useState("all");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [visiblePrices, setVisiblePrices] = useState(prices);
-  const [visibleDataStatus, setVisibleDataStatus] = useState<PriceDataStatus>(dataStatus);
 
   useEffect(() => {
     let isMounted = true;
@@ -169,7 +185,6 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
         }
 
         setVisiblePrices(result.prices);
-        setVisibleDataStatus(result.status);
       })
       .catch(() => {
         if (!isMounted) {
@@ -177,7 +192,6 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
         }
 
         setVisiblePrices(prices);
-        setVisibleDataStatus(dataStatus);
       });
 
     return () => {
@@ -228,14 +242,16 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
           !normalizedSearch ||
           price.venue.name.toLocaleLowerCase("sv").includes(normalizedSearch) ||
           getVenueLocation(price).toLocaleLowerCase("sv").includes(normalizedSearch) ||
+          getBeerDisplayName(price).toLocaleLowerCase("sv").includes(normalizedSearch) ||
           price.beer_name.toLocaleLowerCase("sv").includes(normalizedSearch);
 
         const matchesType = priceTypeFilter === "all" || price.price_type === priceTypeFilter;
+        const matchesBeerStyle = beerStyleFilter === "all" || price.beer?.style === beerStyleFilter;
         const matchesVolume = volumeFilter === "all" || String(price.volume_cl) === volumeFilter;
         const matchesVenue = venueFilter === "all" || price.venue.id === venueFilter;
         const matchesVerified = !verifiedOnly || price.is_verified;
 
-        return matchesSearch && matchesType && matchesVolume && matchesVenue && matchesVerified;
+        return matchesSearch && matchesType && matchesBeerStyle && matchesVolume && matchesVenue && matchesVerified;
       })
       .sort((a, b) => {
         if (sortMode === "venue") {
@@ -248,17 +264,18 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
 
         return a.price_per_liter_sek - b.price_per_liter_sek;
       });
-  }, [visiblePrices, searchTerm, priceTypeFilter, volumeFilter, venueFilter, verifiedOnly, sortMode]);
+  }, [visiblePrices, searchTerm, priceTypeFilter, beerStyleFilter, volumeFilter, venueFilter, verifiedOnly, sortMode]);
 
   const shouldShowLoading = !hasHydrated && prices.length === 0;
   const cheapestVisiblePrice = sortedPrices[0] ?? null;
-  const hasActiveFilters = searchTerm || priceTypeFilter !== "all" || volumeFilter !== "all" || venueFilter !== "all" || verifiedOnly;
+  const hasActiveFilters = searchTerm || priceTypeFilter !== "all" || beerStyleFilter !== "all" || volumeFilter !== "all" || venueFilter !== "all" || verifiedOnly;
   const resultLabel = sortedPrices.length === 1 ? "1 pris" : `${sortedPrices.length} priser`;
   const selectedVenueName = venueSummaries.find((summary) => summary.venue.id === venueFilter)?.venue.name ?? null;
 
   function resetFilters() {
     setSearchTerm("");
     setPriceTypeFilter("all");
+    setBeerStyleFilter("all");
     setVolumeFilter("all");
     setVenueFilter("all");
     setVerifiedOnly(false);
@@ -311,7 +328,7 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
             <div className="min-w-0">
               <h2 className="text-3xl font-black text-foam">Billigast per liter</h2>
               <p className="mt-2 text-sm font-semibold leading-6 text-foam/60">
-                {selectedVenueName ? `Filtrerat på ${selectedVenueName}.` : "Rankat för snabb mobilskanning."}
+                {selectedVenueName ? `Filtrerat på ${selectedVenueName}.` : "Sorterat på lägst literpris."}
               </p>
             </div>
             <div className="max-w-[9.5rem] shrink-0 rounded-3xl bg-white/[0.08] px-4 py-3 text-right ring-1 ring-white/10">
@@ -339,6 +356,25 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
                   }`}
                   type="button"
                   onClick={() => setPriceTypeFilter(filter.value)}
+                >
+                  {filter.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="-mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-1">
+            {beerStyleFilters.map((filter) => {
+              const isActive = beerStyleFilter === filter.value;
+
+              return (
+                <button
+                  key={filter.value}
+                  className={`min-h-11 shrink-0 rounded-full px-4 text-sm font-black ${
+                    isActive ? "bg-hop text-night" : "bg-white/[0.09] text-foam/60 ring-1 ring-white/10 hover:bg-white/[0.14]"
+                  }`}
+                  type="button"
+                  onClick={() => setBeerStyleFilter(filter.value)}
                 >
                   {filter.label}
                 </button>
@@ -385,12 +421,6 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
             )}
           </div>
         </div>
-
-        {visibleDataStatus === "fallback" && sortedPrices.length > 0 && (
-          <p className="mt-5 rounded-3xl border border-malt/30 bg-malt/10 px-4 py-3 text-sm font-bold text-foam/70">
-            Visar exempeldata tills aktuella priser finns.
-          </p>
-        )}
 
         {shouldShowLoading && (
           <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.06] p-6 text-center">

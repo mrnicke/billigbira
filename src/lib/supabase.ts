@@ -18,7 +18,7 @@ function createSupabaseBrowserClient(): SupabaseClient | null {
       },
     });
   } catch {
-    console.warn("Supabase public configuration is invalid. Falling back to local data.");
+    console.warn("Supabase public configuration is invalid.");
     return null;
   }
 }
