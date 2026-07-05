@@ -51,6 +51,26 @@ function feedbackClass(tone: Feedback["tone"]) {
   return "bg-white text-ink/70 ring-black/10";
 }
 
+function getVenueDisplayName(report: AdminPriceReport) {
+  return report.venue?.name || report.venue_name;
+}
+
+function getVenueBadgeText(report: AdminPriceReport) {
+  return report.venue_id ? "Befintligt ställe" : "Nytt ställe";
+}
+
+function getVenueDetailText(report: AdminPriceReport) {
+  if (report.venue_id && report.venue?.name) {
+    return `Kopplad till ${report.venue.name}`;
+  }
+
+  if (report.venue_id) {
+    return "Kopplad till befintligt ställe";
+  }
+
+  return "Skapar nytt ställe vid godkännande";
+}
+
 export default function AdminReports() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [email, setEmail] = useState("");
@@ -274,8 +294,14 @@ export default function AdminReports() {
               <article key={report.id} className="rounded-lg border border-black/10 bg-foam p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <h3 className="text-2xl font-black text-ink">{report.venue_name}</h3>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <h3 className="text-2xl font-black text-ink">{getVenueDisplayName(report)}</h3>
+                      <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">
+                        {getVenueBadgeText(report)}
+                      </span>
+                    </div>
                     <p className="mt-1 text-sm font-semibold text-ink/60">Rapporterad {formatDate(report.created_at)}</p>
+                    <p className="mt-1 text-sm font-semibold text-ink/60">{getVenueDetailText(report)}</p>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <button

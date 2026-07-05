@@ -80,7 +80,7 @@ Admin kan:
 - godkänna en rapport via `approve_price_report(report_id)`
 - avvisa en rapport via `reject_price_report(report_id, review_reason)`
 
-Godkännande skapar en verifierad rad i `beer_prices`, markerar rapporten som `approved`, sätter reviewfält och länkar rapporten till det skapade priset. Om rapporten saknar `venue_id` matchas först aktivt ställe på namn; annars skapas ett aktivt ställe med slug från rapportens ställenamn.
+Godkännande skapar en verifierad rad i `beer_prices`, markerar rapporten som `approved`, sätter reviewfält och länkar rapporten till det skapade priset. Om rapporten har `venue_id` används det befintliga stället. Om rapporten saknar `venue_id` matchas först aktivt ställe på namn; annars skapas ett aktivt ställe med slug från rapportens ställenamn. Den publika prislistan hämtar priser från Supabase i klienten så att godkända priser syns efter refresh utan ny GitHub Pages-build.
 
 Avslag markerar rapporten som `rejected` och sparar reviewfält. Avvisade rapporter visas inte publikt.
 
@@ -100,13 +100,17 @@ Användarens e-post behöver inte hårdkodas i schema eller frontend.
 
 ## Testa adminmoderering
 
-1. Skicka en rapport publikt via formuläret.
-2. Kontrollera i Supabase att rapporten finns i `price_reports` med `status = 'pending'`.
+1. Skicka en rapport publikt mot ett befintligt serveringsställe via formuläret.
+2. Kontrollera i Supabase att rapporten finns i `price_reports` med `status = 'pending'` och att `venue_id` är satt.
 3. Logga in på `/admin` med Supabase Auth-kontot som finns i `admin_users`.
 4. Godkänn rapporten.
-5. Kontrollera att en verifierad rad skapats i `beer_prices` och att priset syns i publika listan.
-6. Skicka en ny rapport och avvisa den.
-7. Kontrollera att rapporten fått `status = 'rejected'` och inte syns publikt.
+5. Kontrollera att en verifierad rad skapats i `beer_prices`, att `beer_prices.venue_id` pekar på samma ställe och att priset syns i publika listan efter refresh.
+6. Skicka en rapport publikt med "Lägg till nytt ställe".
+7. Kontrollera att `price_reports.venue_id` är tomt och att `venue_name` innehåller det nya stället.
+8. Godkänn rapporten i admin.
+9. Kontrollera att ett aktivt ställe skapats i `venues`, att en verifierad rad skapats i `beer_prices`, att `price_reports.approved_price_id` är satt och att priset syns publikt.
+10. Skicka en ny rapport och avvisa den.
+11. Kontrollera att rapporten fått `status = 'rejected'` och inte syns publikt.
 
 ## Dataflöde
 
@@ -117,6 +121,8 @@ Publik data hämtas via `src/lib/data/prices.ts`:
 - `getVenues()`
 - `getBeerPrices()`
 - `submitPriceReport()`
+
+Rapportformuläret hämtar aktiva `venues` via `getVenues()`. Om besökaren väljer ett befintligt ställe skickas `venue_id` tillsammans med ställets namn till `price_reports`. Om besökaren lägger till ett nytt ställe skickas `venue_name` och adminflödet skapar ett aktivt `venues`-record först vid godkännande.
 
 Adminlogik ligger separat i `src/lib/data/admin.ts`:
 
@@ -159,6 +165,5 @@ Workflow finns i `.github/workflows/deploy.yml`. Deploy sker via GitHub Actions 
 
 ## Nästa steg
 
-- Lägg till adminval för att koppla rapporter till befintliga ställen innan godkännande.
 - Lägg till avvisningsorsak i UI om den ska användas operativt.
 - Lägg till auditvy för redan hanterade rapporter.

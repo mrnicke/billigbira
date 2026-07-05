@@ -5,6 +5,7 @@ import type { PriceReport } from "../types";
 
 export type AdminPriceReport = PriceReport & {
   price_per_liter_sek: number;
+  venue: { id: string; name: string } | null;
 };
 
 type AdminActionResult = {
@@ -16,6 +17,10 @@ type PendingReportsResult = {
   reports: AdminPriceReport[];
   ok: boolean;
   message?: string;
+};
+
+type PriceReportWithVenueRow = PriceReport & {
+  venues: { id: string; name: string } | { id: string; name: string }[] | null;
 };
 
 function ensureSupabase() {
@@ -43,15 +48,25 @@ function logAdminError(action: string, error: { code?: string; message?: string;
   });
 }
 
-function normalizeReport(report: PriceReport): AdminPriceReport {
+function normalizeJoinedVenue(venue: PriceReportWithVenueRow["venues"]): AdminPriceReport["venue"] {
+  if (Array.isArray(venue)) {
+    return venue[0] ?? null;
+  }
+
+  return venue;
+}
+
+function normalizeReport(report: PriceReportWithVenueRow): AdminPriceReport {
   const priceSek = Number(report.price_sek);
   const volumeCl = Number(report.volume_cl);
+  const { venues, ...priceReport } = report;
 
   return {
-    ...report,
+    ...priceReport,
     price_sek: priceSek,
     volume_cl: volumeCl,
     price_per_liter_sek: calculatePricePerLiter(priceSek, volumeCl),
+    venue: normalizeJoinedVenue(venues),
   };
 }
 
@@ -172,7 +187,11 @@ export async function getPendingReports(): Promise<PendingReportsResult> {
         reviewed_by,
         rejection_reason,
         approved_price_id,
-        created_at
+        created_at,
+        venues:venue_id (
+          id,
+          name
+        )
       `,
     )
     .eq("status", "pending")
@@ -190,7 +209,7 @@ export async function getPendingReports(): Promise<PendingReportsResult> {
 
   return {
     ok: true,
-    reports: (data as PriceReport[]).map(normalizeReport),
+    reports: (data as unknown as PriceReportWithVenueRow[]).map(normalizeReport),
   };
 }
 

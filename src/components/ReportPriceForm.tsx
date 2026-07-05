@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
-import { submitPriceReport } from "../lib/data/prices";
+import { useEffect, useMemo, useState } from "react";
+import { getVenues, submitPriceReport } from "../lib/data/prices";
 import { calculatePricePerLiter, formatPricePerLiter } from "../lib/pricing";
-import type { PriceType } from "../lib/types";
+import type { PriceType, Venue } from "../lib/types";
 
 type SubmitState = "idle" | "submitting" | "saved" | "preview" | "error";
+type VenueMode = "existing" | "new";
+
+const validPriceTypes: PriceType[] = ["normalpris", "after_work", "happy_hour", "student", "okänd"];
 
 function parsePositiveDecimal(value: string): number | null {
   const parsed = Number(value.replace(",", "."));
@@ -11,11 +14,54 @@ function parsePositiveDecimal(value: string): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function isValidPriceType(value: string): value is PriceType {
+  return validPriceTypes.includes(value as PriceType);
+}
+
 export default function ReportPriceForm() {
   const [priceSek, setPriceSek] = useState("");
   const [volumeCl, setVolumeCl] = useState("40");
+  const [venueMode, setVenueMode] = useState<VenueMode>("existing");
+  const [selectedVenueId, setSelectedVenueId] = useState("");
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [isLoadingVenues, setIsLoadingVenues] = useState(true);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    getVenues()
+      .then((loadedVenues) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setVenues(loadedVenues);
+        setSelectedVenueId((currentVenueId) => currentVenueId || loadedVenues[0]?.id || "");
+
+        if (loadedVenues.length === 0) {
+          setVenueMode("new");
+        }
+      })
+      .catch(() => {
+        if (!isMounted) {
+          return;
+        }
+
+        setVenueMode("new");
+        setMessage("Kunde inte hämta listan med ställen just nu. Ange stället manuellt.");
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoadingVenues(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const calculatedPrice = useMemo(() => {
     const price = parsePositiveDecimal(priceSek);
@@ -35,7 +81,7 @@ export default function ReportPriceForm() {
           <p className="text-sm font-bold uppercase tracking-normal text-copper">Rapportera pris</p>
           <h2 className="mt-2 text-3xl font-black text-ink sm:text-4xl">Har du sett billig bira?</h2>
           <p className="mt-4 text-base leading-7 text-ink/70">
-            Formuläret kan skicka rapporter när databasen är ansluten. Annars kan du testa flödet lokalt utan att något sparas.
+            Välj ett befintligt serveringsställe eller lägg till ett nytt om det saknas i listan.
           </p>
           {calculatedPrice && (
             <div className="mt-6 rounded-lg bg-white p-4 shadow-sm">
@@ -53,13 +99,21 @@ export default function ReportPriceForm() {
             setMessage("");
 
             const formData = new FormData(event.currentTarget);
-            const venueName = String(formData.get("venue") || "").trim();
+            const newVenueName = String(formData.get("venueName") || "").trim();
             const beerName = String(formData.get("beerName") || "").trim();
+            const priceTypeValue = String(formData.get("priceType") || "normalpris");
             const price = parsePositiveDecimal(priceSek);
             const volume = parsePositiveDecimal(volumeCl);
+            const selectedVenue = venues.find((venue) => venue.id === selectedVenueId) ?? null;
 
-            if (!venueName) {
-              setMessage("Ange serveringsställe.");
+            if (venueMode === "existing" && !selectedVenue) {
+              setMessage("Välj ett serveringsställe eller lägg till ett nytt.");
+              setSubmitState("error");
+              return;
+            }
+
+            if (venueMode === "new" && !newVenueName) {
+              setMessage("Ange namnet på serveringsstället.");
               setSubmitState("error");
               return;
             }
@@ -82,14 +136,20 @@ export default function ReportPriceForm() {
               return;
             }
 
+            if (!isValidPriceType(priceTypeValue)) {
+              setMessage("Välj en giltig pristyp.");
+              setSubmitState("error");
+              return;
+            }
+
             try {
               const result = await submitPriceReport({
-                venue_id: null,
-                venue_name: venueName,
+                venue_id: venueMode === "existing" ? selectedVenue?.id ?? null : null,
+                venue_name: venueMode === "existing" ? selectedVenue?.name ?? "" : newVenueName,
                 beer_name: beerName,
                 volume_cl: volume,
                 price_sek: price,
-                price_type: String(formData.get("priceType") || "normalpris") as PriceType,
+                price_type: priceTypeValue,
                 observed_at: new Date().toISOString().slice(0, 10),
                 reporter_note: String(formData.get("comment") || "").trim() || null,
               });
@@ -109,10 +169,59 @@ export default function ReportPriceForm() {
           }}
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="grid gap-2 text-sm font-bold text-ink">
-              Serveringsställe
-              <input className="rounded-md border border-black/15 px-3 py-3 font-medium" name="venue" placeholder="Exempelbaren" required />
-            </label>
+            <fieldset className="grid gap-3 sm:col-span-2">
+              <legend className="text-sm font-bold text-ink">Serveringsställe</legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex items-center gap-3 rounded-md border border-black/15 px-3 py-3 text-sm font-bold text-ink">
+                  <input
+                    type="radio"
+                    name="venueMode"
+                    value="existing"
+                    checked={venueMode === "existing"}
+                    onChange={() => setVenueMode("existing")}
+                    disabled={venues.length === 0}
+                  />
+                  Välj befintligt ställe
+                </label>
+                <label className="flex items-center gap-3 rounded-md border border-black/15 px-3 py-3 text-sm font-bold text-ink">
+                  <input
+                    type="radio"
+                    name="venueMode"
+                    value="new"
+                    checked={venueMode === "new"}
+                    onChange={() => setVenueMode("new")}
+                  />
+                  Lägg till nytt ställe
+                </label>
+              </div>
+            </fieldset>
+
+            {venueMode === "existing" ? (
+              <label className="grid gap-2 text-sm font-bold text-ink sm:col-span-2">
+                Befintligt ställe
+                <select
+                  className="rounded-md border border-black/15 px-3 py-3 font-medium"
+                  value={selectedVenueId}
+                  onChange={(event) => setSelectedVenueId(event.target.value)}
+                  disabled={isLoadingVenues || venues.length === 0}
+                  required
+                >
+                  {isLoadingVenues && <option value="">Laddar ställen...</option>}
+                  {!isLoadingVenues && venues.length === 0 && <option value="">Inga ställen hittades</option>}
+                  {venues.map((venue) => (
+                    <option key={venue.id} value={venue.id}>
+                      {venue.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="grid gap-2 text-sm font-bold text-ink sm:col-span-2">
+                Nytt ställe
+                <input className="rounded-md border border-black/15 px-3 py-3 font-medium" name="venueName" placeholder="Exempelbaren" required />
+              </label>
+            )}
+
             <label className="grid gap-2 text-sm font-bold text-ink">
               Öl/prisnamn
               <input className="rounded-md border border-black/15 px-3 py-3 font-medium" name="beerName" placeholder="Stor stark" required />
@@ -141,7 +250,7 @@ export default function ReportPriceForm() {
                 onChange={(event) => setVolumeCl(event.target.value)}
               />
             </label>
-            <label className="grid gap-2 text-sm font-bold text-ink sm:col-span-2">
+            <label className="grid gap-2 text-sm font-bold text-ink">
               Pristyp
               <select className="rounded-md border border-black/15 px-3 py-3 font-medium" name="priceType" defaultValue="normalpris">
                 <option value="normalpris">Normalpris</option>
@@ -159,17 +268,7 @@ export default function ReportPriceForm() {
           <button className="mt-5 w-full rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink disabled:cursor-not-allowed disabled:bg-ink/40" type="submit" disabled={submitState === "submitting"}>
             {submitState === "submitting" ? "Skickar..." : "Skicka rapport"}
           </button>
-          {submitState === "saved" && (
-            <p className="mt-4 rounded-md bg-foam p-3 text-sm font-semibold text-ink">
-              {message}
-            </p>
-          )}
-          {submitState === "preview" && (
-            <p className="mt-4 rounded-md bg-foam p-3 text-sm font-semibold text-ink">
-              {message}
-            </p>
-          )}
-          {submitState === "error" && (
+          {message && (
             <p className="mt-4 rounded-md bg-foam p-3 text-sm font-semibold text-ink">
               {message}
             </p>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BeerPriceListItem, PriceDataStatus } from "../lib/data/prices";
+import { getBeerPriceList, type BeerPriceListItem, type PriceDataStatus } from "../lib/data/prices";
 import { formatPricePerLiter, formatSek } from "../lib/pricing";
 import type { PriceType } from "../lib/types";
 
@@ -25,13 +25,39 @@ function getVenueLocation(price: BeerPriceListItem) {
 export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
   const [sortMode, setSortMode] = useState<SortMode>("pricePerLiter");
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [visiblePrices, setVisiblePrices] = useState(prices);
+  const [visibleDataStatus, setVisibleDataStatus] = useState<PriceDataStatus>(dataStatus);
 
   useEffect(() => {
+    let isMounted = true;
+
     setHasHydrated(true);
+
+    getBeerPriceList()
+      .then((result) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setVisiblePrices(result.prices);
+        setVisibleDataStatus(result.status);
+      })
+      .catch(() => {
+        if (!isMounted) {
+          return;
+        }
+
+        setVisiblePrices(prices);
+        setVisibleDataStatus(dataStatus);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const sortedPrices = useMemo(() => {
-    return [...prices].sort((a, b) => {
+    return [...visiblePrices].sort((a, b) => {
       if (sortMode === "venue") {
         return a.venue.name.localeCompare(b.venue.name, "sv");
       }
@@ -42,10 +68,9 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
 
       return a.price_per_liter_sek - b.price_per_liter_sek;
     });
-  }, [prices, sortMode]);
+  }, [visiblePrices, sortMode]);
 
   const shouldShowLoading = !hasHydrated && prices.length === 0;
-  const shouldShowFallbackNotice = dataStatus === "fallback" && sortedPrices.length > 0;
 
   return (
     <section id="priser" className="bg-white px-4 py-12 sm:px-6 lg:px-8">
@@ -72,7 +97,7 @@ export default function PriceList({ prices, dataStatus = "supabase" }: Props) {
           </label>
         </div>
 
-        {shouldShowFallbackNotice && (
+        {visibleDataStatus === "fallback" && sortedPrices.length > 0 && (
           <p className="mt-6 rounded-md bg-foam px-4 py-3 text-sm font-semibold text-ink/70">
             Visar exempeldata tills aktuella verifierade priser finns tillgängliga.
           </p>
