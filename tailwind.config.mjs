@@ -4,12 +4,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#17211b",
-        foam: "#f8f4e8",
-        malt: "#f2b84b",
-        hop: "#276749",
-        copper: "#b45f32",
-        night: "#101615"
+        ink: "#151a17",
+        foam: "#f7f3e8",
+        paper: "#fffdf7",
+        malt: "#f3b33d",
+        hop: "#2f6f4e",
+        moss: "#dce8d7",
+        copper: "#b75f33",
+        night: "#111614",
+        line: "#ddd4c4"
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"]

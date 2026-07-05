@@ -8,6 +8,18 @@ type VenueMode = "existing" | "new";
 
 const validPriceTypes: PriceType[] = ["normalpris", "after_work", "happy_hour", "student", "okänd"];
 
+const priceTypeLabels: Record<PriceType, string> = {
+  normalpris: "Normalpris",
+  after_work: "After work",
+  happy_hour: "Happy hour",
+  student: "Student",
+  okänd: "Okänd",
+};
+
+const inputClass =
+  "rounded-md border border-line bg-paper px-3 py-3 font-semibold text-ink placeholder:text-ink/35 focus:border-hop focus:outline-none focus:ring-2 focus:ring-hop/25";
+const labelClass = "grid gap-2 text-sm font-black text-ink";
+
 function parsePositiveDecimal(value: string): number | null {
   const parsed = Number(value.replace(",", "."));
 
@@ -18,9 +30,25 @@ function isValidPriceType(value: string): value is PriceType {
   return validPriceTypes.includes(value as PriceType);
 }
 
+function messageClass(state: SubmitState) {
+  if (state === "saved" || state === "preview") {
+    return "border-hop/30 bg-hop/10 text-hop";
+  }
+
+  if (state === "error") {
+    return "border-copper/40 bg-copper/10 text-copper";
+  }
+
+  return "border-line bg-foam text-ink";
+}
+
 export default function ReportPriceForm() {
   const [priceSek, setPriceSek] = useState("");
   const [volumeCl, setVolumeCl] = useState("40");
+  const [beerName, setBeerName] = useState("");
+  const [priceType, setPriceType] = useState<PriceType>("normalpris");
+  const [comment, setComment] = useState("");
+  const [newVenueName, setNewVenueName] = useState("");
   const [venueMode, setVenueMode] = useState<VenueMode>("existing");
   const [selectedVenueId, setSelectedVenueId] = useState("");
   const [venues, setVenues] = useState<Venue[]>([]);
@@ -51,6 +79,7 @@ export default function ReportPriceForm() {
 
         setVenueMode("new");
         setMessage("Kunde inte hämta listan med ställen just nu. Ange stället manuellt.");
+        setSubmitState("error");
       })
       .finally(() => {
         if (isMounted) {
@@ -74,37 +103,38 @@ export default function ReportPriceForm() {
     return formatPricePerLiter(calculatePricePerLiter(price, volume));
   }, [priceSek, volumeCl]);
 
+  const selectedVenue = venues.find((venue) => venue.id === selectedVenueId) ?? null;
+  const isSubmitting = submitState === "submitting";
+
   return (
-    <section id="rapportera" className="bg-foam px-4 py-12 sm:px-6 lg:px-8">
-      <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
+    <section id="rapportera" className="border-t border-line bg-foam px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
         <div>
-          <p className="text-sm font-bold uppercase tracking-normal text-copper">Rapportera pris</p>
-          <h2 className="mt-2 text-3xl font-black text-ink sm:text-4xl">Har du sett billig bira?</h2>
+          <p className="text-sm font-black uppercase tracking-normal text-copper">Rapportera pris</p>
+          <h2 className="mt-2 text-3xl font-black text-ink sm:text-5xl">Har du hittat en bättre bira?</h2>
           <p className="mt-4 text-base leading-7 text-ink/70">
-            Välj ett befintligt serveringsställe eller lägg till ett nytt om det saknas i listan.
+            Skicka in priset medan du minns detaljerna. Rapporten hamnar i moderering innan den blir publik.
           </p>
-          {calculatedPrice && (
-            <div className="mt-6 rounded-lg bg-white p-4 shadow-sm">
-              <p className="text-sm font-bold text-ink/55">Beräknat literpris</p>
-              <p className="mt-1 text-2xl font-black text-hop">{calculatedPrice}</p>
-            </div>
-          )}
+
+          <div className="mt-6 rounded-lg border border-line bg-paper p-4">
+            <p className="text-xs font-black uppercase text-copper">Förhandsvisning</p>
+            <p className="mt-1 text-3xl font-black text-ink">{calculatedPrice ?? "Fyll i pris och volym"}</p>
+            <p className="mt-2 text-sm font-semibold text-ink/60">
+              {venueMode === "existing" ? selectedVenue?.name ?? "Välj serveringsställe" : newVenueName || "Nytt serveringsställe"}
+            </p>
+          </div>
         </div>
 
         <form
-          className="rounded-lg border border-black/10 bg-white p-4 shadow-soft sm:p-6"
+          className="rounded-lg border border-line bg-white p-4 shadow-soft sm:p-6"
           onSubmit={async (event) => {
             event.preventDefault();
             setSubmitState("submitting");
             setMessage("");
 
-            const formData = new FormData(event.currentTarget);
-            const newVenueName = String(formData.get("venueName") || "").trim();
-            const beerName = String(formData.get("beerName") || "").trim();
-            const priceTypeValue = String(formData.get("priceType") || "normalpris");
             const price = parsePositiveDecimal(priceSek);
             const volume = parsePositiveDecimal(volumeCl);
-            const selectedVenue = venues.find((venue) => venue.id === selectedVenueId) ?? null;
+            const venueName = newVenueName.trim();
 
             if (venueMode === "existing" && !selectedVenue) {
               setMessage("Välj ett serveringsställe eller lägg till ett nytt.");
@@ -112,13 +142,13 @@ export default function ReportPriceForm() {
               return;
             }
 
-            if (venueMode === "new" && !newVenueName) {
+            if (venueMode === "new" && !venueName) {
               setMessage("Ange namnet på serveringsstället.");
               setSubmitState("error");
               return;
             }
 
-            if (!beerName) {
+            if (!beerName.trim()) {
               setMessage("Ange öl eller prisnamn.");
               setSubmitState("error");
               return;
@@ -136,7 +166,7 @@ export default function ReportPriceForm() {
               return;
             }
 
-            if (!isValidPriceType(priceTypeValue)) {
+            if (!isValidPriceType(priceType)) {
               setMessage("Välj en giltig pristyp.");
               setSubmitState("error");
               return;
@@ -145,13 +175,13 @@ export default function ReportPriceForm() {
             try {
               const result = await submitPriceReport({
                 venue_id: venueMode === "existing" ? selectedVenue?.id ?? null : null,
-                venue_name: venueMode === "existing" ? selectedVenue?.name ?? "" : newVenueName,
-                beer_name: beerName,
+                venue_name: venueMode === "existing" ? selectedVenue?.name ?? "" : venueName,
+                beer_name: beerName.trim(),
                 volume_cl: volume,
                 price_sek: price,
-                price_type: priceTypeValue,
+                price_type: priceType,
                 observed_at: new Date().toISOString().slice(0, 10),
-                reporter_note: String(formData.get("comment") || "").trim() || null,
+                reporter_note: comment.trim() || null,
               });
 
               setSubmitState(result.ok ? (result.persisted ? "saved" : "preview") : "error");
@@ -162,45 +192,47 @@ export default function ReportPriceForm() {
                     : "Tack. Rapporten är kontrollerad, men sparas först när databasen är ansluten."
                   : "Rapporten kunde inte tas emot just nu. Försök igen om en stund.",
               );
+
+              if (result.ok) {
+                setBeerName("");
+                setPriceSek("");
+                setComment("");
+                setNewVenueName("");
+              }
             } catch {
               setMessage("Rapporten kunde inte tas emot just nu. Försök igen om en stund.");
               setSubmitState("error");
             }
           }}
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <fieldset className="grid gap-3 sm:col-span-2">
-              <legend className="text-sm font-bold text-ink">Serveringsställe</legend>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex items-center gap-3 rounded-md border border-black/15 px-3 py-3 text-sm font-bold text-ink">
-                  <input
-                    type="radio"
-                    name="venueMode"
-                    value="existing"
-                    checked={venueMode === "existing"}
-                    onChange={() => setVenueMode("existing")}
-                    disabled={venues.length === 0}
-                  />
-                  Välj befintligt ställe
-                </label>
-                <label className="flex items-center gap-3 rounded-md border border-black/15 px-3 py-3 text-sm font-bold text-ink">
-                  <input
-                    type="radio"
-                    name="venueMode"
-                    value="new"
-                    checked={venueMode === "new"}
-                    onChange={() => setVenueMode("new")}
-                  />
-                  Lägg till nytt ställe
-                </label>
-              </div>
-            </fieldset>
+          <fieldset className="grid gap-3">
+            <legend className="text-sm font-black text-ink">Serveringsställe</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className={`flex items-center gap-3 rounded-md border px-3 py-3 text-sm font-black ${venueMode === "existing" ? "border-hop bg-moss text-hop" : "border-line bg-paper text-ink"}`}>
+                <input
+                  className="accent-hop"
+                  type="radio"
+                  name="venueMode"
+                  value="existing"
+                  checked={venueMode === "existing"}
+                  onChange={() => setVenueMode("existing")}
+                  disabled={venues.length === 0}
+                />
+                Välj befintligt ställe
+              </label>
+              <label className={`flex items-center gap-3 rounded-md border px-3 py-3 text-sm font-black ${venueMode === "new" ? "border-hop bg-moss text-hop" : "border-line bg-paper text-ink"}`}>
+                <input className="accent-hop" type="radio" name="venueMode" value="new" checked={venueMode === "new"} onChange={() => setVenueMode("new")} />
+                Lägg till nytt ställe
+              </label>
+            </div>
+          </fieldset>
 
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
             {venueMode === "existing" ? (
-              <label className="grid gap-2 text-sm font-bold text-ink sm:col-span-2">
+              <label className={`${labelClass} sm:col-span-2`}>
                 Befintligt ställe
                 <select
-                  className="rounded-md border border-black/15 px-3 py-3 font-medium"
+                  className={inputClass}
                   value={selectedVenueId}
                   onChange={(event) => setSelectedVenueId(event.target.value)}
                   disabled={isLoadingVenues || venues.length === 0}
@@ -214,65 +246,71 @@ export default function ReportPriceForm() {
                     </option>
                   ))}
                 </select>
+                <span className="text-xs font-semibold text-ink/55">Saknas stället? Välj nytt ställe i rutan ovan.</span>
               </label>
             ) : (
-              <label className="grid gap-2 text-sm font-bold text-ink sm:col-span-2">
+              <label className={`${labelClass} sm:col-span-2`}>
                 Nytt ställe
-                <input className="rounded-md border border-black/15 px-3 py-3 font-medium" name="venueName" placeholder="Exempelbaren" required />
+                <input className={inputClass} value={newVenueName} onChange={(event) => setNewVenueName(event.target.value)} placeholder="Exempelbaren" required />
+                <span className="text-xs font-semibold text-ink/55">Admin matchar mot befintliga ställen innan något nytt skapas.</span>
               </label>
             )}
 
-            <label className="grid gap-2 text-sm font-bold text-ink">
+            <label className={labelClass}>
               Öl/prisnamn
-              <input className="rounded-md border border-black/15 px-3 py-3 font-medium" name="beerName" placeholder="Stor stark" required />
+              <input className={inputClass} value={beerName} onChange={(event) => setBeerName(event.target.value)} placeholder="Stor stark" required />
             </label>
-            <label className="grid gap-2 text-sm font-bold text-ink">
+            <label className={labelClass}>
               Pris i kronor
               <input
-                className="rounded-md border border-black/15 px-3 py-3 font-medium"
+                className={inputClass}
                 inputMode="decimal"
-                name="priceSek"
-                placeholder="69"
-                required
                 value={priceSek}
                 onChange={(event) => setPriceSek(event.target.value)}
+                placeholder="69"
+                required
               />
             </label>
-            <label className="grid gap-2 text-sm font-bold text-ink">
+            <label className={labelClass}>
               Volym i cl
               <input
-                className="rounded-md border border-black/15 px-3 py-3 font-medium"
+                className={inputClass}
                 inputMode="decimal"
-                name="volumeCl"
-                placeholder="40"
-                required
                 value={volumeCl}
                 onChange={(event) => setVolumeCl(event.target.value)}
+                placeholder="40"
+                required
               />
             </label>
-            <label className="grid gap-2 text-sm font-bold text-ink">
+            <label className={labelClass}>
               Pristyp
-              <select className="rounded-md border border-black/15 px-3 py-3 font-medium" name="priceType" defaultValue="normalpris">
-                <option value="normalpris">Normalpris</option>
-                <option value="after_work">After work</option>
-                <option value="happy_hour">Happy hour</option>
-                <option value="student">Student</option>
-                <option value="okänd">Okänd</option>
+              <select className={inputClass} value={priceType} onChange={(event) => setPriceType(event.target.value as PriceType)}>
+                {validPriceTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {priceTypeLabels[type]}
+                  </option>
+                ))}
               </select>
             </label>
-            <label className="grid gap-2 text-sm font-bold text-ink sm:col-span-2">
+            <label className={`${labelClass} sm:col-span-2`}>
               Kommentar
-              <textarea className="min-h-28 rounded-md border border-black/15 px-3 py-3 font-medium" name="comment" placeholder="Till exempel tid, dag eller villkor." />
+              <textarea
+                className={`${inputClass} min-h-28`}
+                value={comment}
+                onChange={(event) => setComment(event.target.value)}
+                placeholder="Till exempel tid, dag, happy hour-villkor eller om priset bara gäller med studentkort."
+              />
             </label>
           </div>
-          <button className="mt-5 w-full rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink disabled:cursor-not-allowed disabled:bg-ink/40" type="submit" disabled={submitState === "submitting"}>
-            {submitState === "submitting" ? "Skickar..." : "Skicka rapport"}
+
+          <button
+            className="mt-5 w-full rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink disabled:cursor-not-allowed disabled:bg-ink/40"
+            type="submit"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? "Skickar rapport..." : "Skicka till moderering"}
           </button>
-          {message && (
-            <p className="mt-4 rounded-md bg-foam p-3 text-sm font-semibold text-ink">
-              {message}
-            </p>
-          )}
+          {message && <p className={`mt-4 rounded-md border px-4 py-3 text-sm font-bold ${messageClass(submitState)}`}>{message}</p>}
         </form>
       </div>
     </section>
