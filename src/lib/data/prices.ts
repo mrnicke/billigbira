@@ -105,6 +105,7 @@ export async function getBeerPriceList(): Promise<BeerPriceListResult> {
         observed_at,
         source,
         is_verified,
+        is_active,
         created_at,
         venues:venue_id (
           id,
@@ -119,6 +120,7 @@ export async function getBeerPriceList(): Promise<BeerPriceListResult> {
       `,
     )
     .eq("is_verified", true)
+    .eq("is_active", true)
     .order("price_per_liter_sek", { ascending: true });
 
   if (error || !data) {

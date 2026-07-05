@@ -61,12 +61,16 @@ SQL-filer finns i `supabase/`:
 - `supabase/schema.sql` skapar tabellerna `venues`, `beer_prices` och `price_reports`, constraints, index och grundläggande RLS-policies.
 - `supabase/seed.sql` lägger in tydlig exempeldata för Norrköping.
 - `supabase/admin-moderation.sql` lägger till adminmodell, reviewfält, admin-RLS och RPC-funktioner för godkänn/avvisa.
+- `supabase/admin-report-overrides.sql` uppdaterar approve-RPC:n så admin kan justera rapportdata innan godkännande.
+- `supabase/admin-price-management.sql` lägger till `beer_prices.is_active`, publik filtrering och admin-update för att dölja felaktiga priser utan hårdradering.
 
 Kör filerna i Supabase SQL Editor i denna ordning:
 
 1. `supabase/schema.sql`
 2. `supabase/seed.sql`
 3. `supabase/admin-moderation.sql`
+4. `supabase/admin-report-overrides.sql`
+5. `supabase/admin-price-management.sql`
 
 `admin-moderation.sql` använder inte service role key i frontend. Adminrättighet ligger i databasen via `public.admin_users`, Supabase Auth och RLS.
 
@@ -76,13 +80,17 @@ Adminvyn finns på `/admin`. Den använder Supabase Auth med e-post och lösenor
 
 Admin kan:
 
-- läsa pending reports i `price_reports`
-- godkänna en rapport via `approve_price_report(report_id)`
+- filtrera rapporter på `pending`, `approved`, `rejected` eller `all`
+- läsa pending reports och historik i `price_reports`
+- justera serveringsställe, öl/prisnamn, pris, volym, pristyp, observerat datum och kommentar innan godkännande
+- koppla rapporten till ett befintligt serveringsställe eller låta godkännandet skapa nytt ställe från rapporten
+- godkänna en rapport via `approve_price_report(report_id, override_venue_id, override_venue_name, override_beer_name, override_volume_cl, override_price_sek, override_price_type, override_observed_at, override_reporter_note)`
 - avvisa en rapport via `reject_price_report(report_id, review_reason)`
+- avaktivera eller återaktivera publika priser via `beer_prices.is_active`
 
-Godkännande skapar en verifierad rad i `beer_prices`, markerar rapporten som `approved`, sätter reviewfält och länkar rapporten till det skapade priset. Om rapporten har `venue_id` används det befintliga stället. Om rapporten saknar `venue_id` matchas först aktivt ställe på namn; annars skapas ett aktivt ställe med slug från rapportens ställenamn. Den publika prislistan hämtar priser från Supabase i klienten så att godkända priser syns efter refresh utan ny GitHub Pages-build.
+Godkännande validerar adminjusterade värden server-side, skapar en verifierad och aktiv rad i `beer_prices`, markerar rapporten som `approved`, sparar de granskade värdena på rapporten, sätter reviewfält och länkar rapporten till det skapade priset. Om admin väljer ett befintligt `venue_id` används det stället. Om rapporten ska använda nytt ställe matchas först aktivt ställe på namn; annars skapas ett aktivt ställe med slug från rapportens ställenamn. Den publika prislistan hämtar bara `is_verified = true` och `is_active = true` från Supabase i klienten så att godkända priser syns efter refresh utan ny GitHub Pages-build.
 
-Avslag markerar rapporten som `rejected` och sparar reviewfält. Avvisade rapporter visas inte publikt.
+Avslag markerar rapporten som `rejected`, sparar reviewfält och `rejection_reason`. Avvisade rapporter visas inte publikt. Felaktiga priser ska normalt döljas med `is_active = false`, inte hårdraderas.
 
 ### Skapa adminanvändare
 
@@ -103,14 +111,16 @@ Användarens e-post behöver inte hårdkodas i schema eller frontend.
 1. Skicka en rapport publikt mot ett befintligt serveringsställe via formuläret.
 2. Kontrollera i Supabase att rapporten finns i `price_reports` med `status = 'pending'` och att `venue_id` är satt.
 3. Logga in på `/admin` med Supabase Auth-kontot som finns i `admin_users`.
-4. Godkänn rapporten.
-5. Kontrollera att en verifierad rad skapats i `beer_prices`, att `beer_prices.venue_id` pekar på samma ställe och att priset syns i publika listan efter refresh.
+4. Ändra pris eller volym i admin och godkänn rapporten.
+5. Kontrollera att en verifierad och aktiv rad skapats i `beer_prices`, att `beer_prices.venue_id` pekar på rätt ställe och att justerat pris syns i publika listan efter refresh.
 6. Skicka en rapport publikt med "Lägg till nytt ställe".
 7. Kontrollera att `price_reports.venue_id` är tomt och att `venue_name` innehåller det nya stället.
-8. Godkänn rapporten i admin.
-9. Kontrollera att ett aktivt ställe skapats i `venues`, att en verifierad rad skapats i `beer_prices`, att `price_reports.approved_price_id` är satt och att priset syns publikt.
-10. Skicka en ny rapport och avvisa den.
-11. Kontrollera att rapporten fått `status = 'rejected'` och inte syns publikt.
+8. Avvisa rapporten med en orsak, till exempel `test/skräp`.
+9. Kontrollera att rapporten fått `status = 'rejected'`, att `rejection_reason` är satt och att rapporten inte syns publikt.
+10. Skicka en ny rapport på nytt ställe, godkänn den och kontrollera att ett aktivt ställe skapats i `venues`, att `price_reports.approved_price_id` är satt och att priset syns publikt.
+11. Avaktivera ett publikt pris i admin.
+12. Kontrollera att `beer_prices.is_active = false` och att priset inte längre syns publikt efter refresh.
+13. Återaktivera priset om det var testdata som ska återställas.
 
 ## Dataflöde
 
@@ -129,9 +139,15 @@ Adminlogik ligger separat i `src/lib/data/admin.ts`:
 - `getCurrentUser()`
 - `signInAdmin()`
 - `signOutAdmin()`
-- `getPendingReports()`
+- `getAdminVenues()`
+- `getReportStatusCounts()`
+- `getReportsByStatus()`
+- `getPendingReports()` som kompatibel wrapper
 - `approveReport()`
 - `rejectReport()`
+- `getAdminBeerPrices()`
+- `deactivateBeerPrice()`
+- `reactivateBeerPrice()`
 
 När Supabase saknar konfiguration används fallback-data från `src/data/beerPrices.ts` för den publika listan. Adminflödet kräver Supabase-konfiguration.
 
@@ -145,6 +161,7 @@ price_sek / (volume_cl / 100)
 
 - Ingen service role key används i frontend.
 - Publika besökare kan läsa aktiva ställen och verifierade priser.
+- Publika besökare kan bara läsa priser som både är verifierade och aktiva.
 - Publika besökare kan skapa pending reports.
 - Publika besökare kan inte läsa alla pending reports.
 - Publika besökare kan inte skriva direkt till `beer_prices`.

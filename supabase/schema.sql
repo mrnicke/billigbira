@@ -23,6 +23,7 @@ create table if not exists public.beer_prices (
   observed_at date not null default current_date,
   source text not null default 'manual',
   is_verified boolean not null default false,
+  is_active boolean not null default true,
   created_at timestamptz not null default now(),
   constraint beer_prices_volume_positive check (volume_cl > 0),
   constraint beer_prices_price_positive check (price_sek > 0),
@@ -50,6 +51,7 @@ create table if not exists public.price_reports (
 
 create index if not exists venues_active_city_idx on public.venues (city, is_active);
 create index if not exists beer_prices_verified_liter_idx on public.beer_prices (is_verified, price_per_liter_sek);
+create index if not exists beer_prices_active_verified_liter_idx on public.beer_prices (is_active, is_verified, price_per_liter_sek);
 create index if not exists beer_prices_venue_idx on public.beer_prices (venue_id);
 create index if not exists price_reports_status_created_idx on public.price_reports (status, created_at desc);
 
@@ -69,6 +71,7 @@ create policy "Public can read verified active beer prices"
   for select
   using (
     is_verified = true
+    and is_active = true
     and exists (
       select 1
       from public.venues

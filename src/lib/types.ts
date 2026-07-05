@@ -24,6 +24,7 @@ export type BeerPrice = {
   observed_at: string;
   source: PriceSource;
   is_verified: boolean;
+  is_active?: boolean;
   created_at: string;
 };
 

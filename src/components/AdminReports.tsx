@@ -1,16 +1,23 @@
 import { useEffect, useMemo, useState, type ComponentProps } from "react";
 import {
   approveReport,
+  deactivateBeerPrice,
+  getAdminBeerPrices,
+  getAdminVenues,
   getCurrentUser,
-  getPendingReports,
+  getReportStatusCounts,
+  getReportsByStatus,
   onAdminAuthChange,
+  reactivateBeerPrice,
   rejectReport,
   signInAdmin,
   signOutAdmin,
+  type AdminBeerPrice,
   type AdminPriceReport,
+  type AdminReportStatusFilter,
 } from "../lib/data/admin";
-import { formatPricePerLiter, formatSek } from "../lib/pricing";
-import type { PriceType } from "../lib/types";
+import { calculatePricePerLiter, formatPricePerLiter, formatSek } from "../lib/pricing";
+import type { PriceType, ReportStatus, Venue } from "../lib/types";
 
 type AuthState = "checking" | "signedOut" | "signedIn";
 type Feedback = {
@@ -18,6 +25,26 @@ type Feedback = {
   text: string;
 };
 type FormSubmitEvent = Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0];
+type VenueMode = "existing" | "new";
+
+type ReportEditState = {
+  venueMode: VenueMode;
+  venueId: string;
+  venueName: string;
+  beerName: string;
+  priceSek: string;
+  volumeCl: string;
+  priceType: PriceType;
+  observedAt: string;
+  reporterNote: string;
+};
+
+type RejectState = {
+  reason: string;
+  customReason: string;
+};
+
+const validPriceTypes: PriceType[] = ["normalpris", "after_work", "happy_hour", "student", "okänd"];
 
 const priceTypeLabels: Record<PriceType, string> = {
   normalpris: "Normalpris",
@@ -26,6 +53,30 @@ const priceTypeLabels: Record<PriceType, string> = {
   student: "Student",
   okänd: "Okänd",
 };
+
+const statusLabels: Record<ReportStatus, string> = {
+  pending: "Pending",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
+const statusFilters: AdminReportStatusFilter[] = ["pending", "approved", "rejected", "all"];
+
+const rejectionReasons = [
+  { value: "fel pris", label: "Fel pris" },
+  { value: "dublett", label: "Dublett" },
+  { value: "oklart ställe", label: "Oklart ställe" },
+  { value: "test/skräp", label: "Test/skräp" },
+  { value: "annat", label: "Annat" },
+];
+
+const inputClass = "rounded-md border border-black/15 bg-white px-3 py-3 font-medium text-ink";
+const labelClass = "grid gap-2 text-sm font-bold text-ink";
+
+function parsePositiveDecimal(value: string): number | null {
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
 
 function formatDate(value?: string | null) {
   if (!value) {
@@ -39,6 +90,14 @@ function formatDate(value?: string | null) {
   }).format(new Date(value));
 }
 
+function dateInputValue(value?: string | null) {
+  return value ? value.slice(0, 10) : "";
+}
+
+function decimalValue(value: number) {
+  return Number(value).toString();
+}
+
 function feedbackClass(tone: Feedback["tone"]) {
   if (tone === "success") {
     return "bg-hop/10 text-hop ring-hop/20";
@@ -49,6 +108,22 @@ function feedbackClass(tone: Feedback["tone"]) {
   }
 
   return "bg-white text-ink/70 ring-black/10";
+}
+
+function statusBadgeClass(status: ReportStatus) {
+  if (status === "approved") {
+    return "bg-hop text-white";
+  }
+
+  if (status === "rejected") {
+    return "bg-copper text-white";
+  }
+
+  return "bg-white text-ink ring-1 ring-black/15";
+}
+
+function activeBadgeClass(isActive?: boolean) {
+  return isActive === false ? "bg-copper text-white" : "bg-hop text-white";
 }
 
 function getVenueDisplayName(report: AdminPriceReport) {
@@ -71,34 +146,105 @@ function getVenueDetailText(report: AdminPriceReport) {
   return "Skapar nytt ställe vid godkännande";
 }
 
+function makeInitialEditState(report: AdminPriceReport): ReportEditState {
+  return {
+    venueMode: report.venue_id ? "existing" : "new",
+    venueId: report.venue_id ?? "",
+    venueName: report.venue?.name || report.venue_name,
+    beerName: report.beer_name,
+    priceSek: decimalValue(report.price_sek),
+    volumeCl: decimalValue(report.volume_cl),
+    priceType: report.price_type,
+    observedAt: dateInputValue(report.observed_at),
+    reporterNote: report.reporter_note ?? "",
+  };
+}
+
+function makeInitialRejectState(): RejectState {
+  return {
+    reason: rejectionReasons[0].value,
+    customReason: "",
+  };
+}
+
+function changedText(current: string | number | null | undefined, original: string | number | null | undefined) {
+  return String(current ?? "").trim() !== String(original ?? "").trim();
+}
+
+function OriginalValue({ show, value }: { show: boolean; value: string }) {
+  if (!show) {
+    return null;
+  }
+
+  return <span className="text-xs font-semibold text-copper">Rapporterat: {value}</span>;
+}
+
 export default function AdminReports() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [reports, setReports] = useState<AdminPriceReport[]>([]);
+  const [reportStatusFilter, setReportStatusFilter] = useState<AdminReportStatusFilter>("pending");
+  const [reportCounts, setReportCounts] = useState<Record<ReportStatus, number>>({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+  });
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [adminPrices, setAdminPrices] = useState<AdminBeerPrice[]>([]);
+  const [editStates, setEditStates] = useState<Record<string, ReportEditState>>({});
+  const [rejectStates, setRejectStates] = useState<Record<string, RejectState>>({});
   const [isLoadingReports, setIsLoadingReports] = useState(false);
   const [actionReportId, setActionReportId] = useState<string | null>(null);
+  const [actionPriceId, setActionPriceId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   const reportCountLabel = useMemo(() => {
     if (reports.length === 1) {
-      return "1 rapport väntar";
+      return "1 rapport";
     }
 
-    return `${reports.length} rapporter väntar`;
+    return `${reports.length} rapporter`;
   }, [reports.length]);
 
-  async function loadReports() {
+  async function loadAdminData(status = reportStatusFilter) {
     setIsLoadingReports(true);
     setFeedback(null);
 
-    const result = await getPendingReports();
+    const [reportsResult, countsResult, venuesResult, pricesResult] = await Promise.all([
+      getReportsByStatus(status),
+      getReportStatusCounts(),
+      getAdminVenues(),
+      getAdminBeerPrices(),
+    ]);
 
-    setReports(result.reports);
+    setReports(reportsResult.reports);
+    setReportCounts(countsResult.counts);
+    setVenues(venuesResult.venues);
+    setAdminPrices(pricesResult.prices);
+    setEditStates((current) => {
+      const next = { ...current };
+
+      for (const report of reportsResult.reports) {
+        next[report.id] ??= makeInitialEditState(report);
+      }
+
+      return next;
+    });
+    setRejectStates((current) => {
+      const next = { ...current };
+
+      for (const report of reportsResult.reports) {
+        next[report.id] ??= makeInitialRejectState();
+      }
+
+      return next;
+    });
     setIsLoadingReports(false);
 
-    if (!result.ok && result.message) {
-      setFeedback({ tone: "error", text: result.message });
+    const failedResult = [reportsResult, countsResult, venuesResult, pricesResult].find((result) => !result.ok);
+    if (failedResult?.message) {
+      setFeedback({ tone: "error", text: failedResult.message });
     }
   }
 
@@ -111,19 +257,14 @@ export default function AdminReports() {
       }
 
       setAuthState(user ? "signedIn" : "signedOut");
-
-      if (user) {
-        void loadReports();
-      }
     });
 
     const subscription = onAdminAuthChange((user) => {
       setAuthState(user ? "signedIn" : "signedOut");
 
-      if (user) {
-        void loadReports();
-      } else {
+      if (!user) {
         setReports([]);
+        setAdminPrices([]);
       }
     });
 
@@ -132,6 +273,32 @@ export default function AdminReports() {
       subscription?.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (authState === "signedIn") {
+      void loadAdminData(reportStatusFilter);
+    }
+  }, [authState, reportStatusFilter]);
+
+  function updateEditState(reportId: string, patch: Partial<ReportEditState>) {
+    setEditStates((current) => ({
+      ...current,
+      [reportId]: {
+        ...(current[reportId] ?? makeInitialEditState(reports.find((report) => report.id === reportId)!)),
+        ...patch,
+      },
+    }));
+  }
+
+  function updateRejectState(reportId: string, patch: Partial<RejectState>) {
+    setRejectStates((current) => ({
+      ...current,
+      [reportId]: {
+        ...(current[reportId] ?? makeInitialRejectState()),
+        ...patch,
+      },
+    }));
+  }
 
   async function handleSignIn(event: FormSubmitEvent) {
     event.preventDefault();
@@ -146,21 +313,70 @@ export default function AdminReports() {
 
     setPassword("");
     setAuthState("signedIn");
-    await loadReports();
   }
 
   async function handleSignOut() {
     await signOutAdmin();
     setReports([]);
+    setAdminPrices([]);
     setAuthState("signedOut");
     setFeedback({ tone: "info", text: "Du är utloggad." });
   }
 
-  async function handleApprove(reportId: string) {
-    setActionReportId(reportId);
+  function validateReportEdit(report: AdminPriceReport, edit: ReportEditState) {
+    const selectedVenue = edit.venueMode === "existing" ? venues.find((venue) => venue.id === edit.venueId) : null;
+    const venueName = edit.venueMode === "existing" ? selectedVenue?.name ?? "" : edit.venueName.trim();
+    const price = parsePositiveDecimal(edit.priceSek);
+    const volume = parsePositiveDecimal(edit.volumeCl);
+
+    if (!venueName) {
+      return { ok: false as const, message: "Serveringsställe krävs." };
+    }
+
+    if (!edit.beerName.trim()) {
+      return { ok: false as const, message: "Öl/prisnamn krävs." };
+    }
+
+    if (price == null) {
+      return { ok: false as const, message: "Pris måste vara större än 0." };
+    }
+
+    if (volume == null) {
+      return { ok: false as const, message: "Volym måste vara större än 0." };
+    }
+
+    if (!validPriceTypes.includes(edit.priceType)) {
+      return { ok: false as const, message: "Pristypen är inte giltig." };
+    }
+
+    return {
+      ok: true as const,
+      overrides: {
+        venue_id: selectedVenue?.id ?? null,
+        venue_name: venueName,
+        beer_name: edit.beerName,
+        volume_cl: volume,
+        price_sek: price,
+        price_type: edit.priceType,
+        observed_at: edit.observedAt || report.observed_at || null,
+        reporter_note: edit.reporterNote.trim() || null,
+      },
+    };
+  }
+
+  async function handleApprove(report: AdminPriceReport) {
+    const edit = editStates[report.id] ?? makeInitialEditState(report);
+    const validation = validateReportEdit(report, edit);
+
+    if (!validation.ok) {
+      setFeedback({ tone: "error", text: validation.message });
+      return;
+    }
+
+    setActionReportId(report.id);
     setFeedback(null);
 
-    const result = await approveReport(reportId);
+    const result = await approveReport(report.id, validation.overrides);
 
     setActionReportId(null);
 
@@ -169,15 +385,23 @@ export default function AdminReports() {
       return;
     }
 
-    setFeedback({ tone: "success", text: "Rapporten godkändes och priset är verifierat." });
-    await loadReports();
+    setFeedback({ tone: "success", text: "Rapporten godkändes med de redigerade värdena." });
+    await loadAdminData(reportStatusFilter);
   }
 
   async function handleReject(reportId: string) {
+    const rejectState = rejectStates[reportId] ?? makeInitialRejectState();
+    const reason = rejectState.reason === "annat" ? rejectState.customReason.trim() : rejectState.reason;
+
+    if (!reason) {
+      setFeedback({ tone: "error", text: "Ange en avvisningsorsak." });
+      return;
+    }
+
     setActionReportId(reportId);
     setFeedback(null);
 
-    const result = await rejectReport(reportId);
+    const result = await rejectReport(reportId, reason);
 
     setActionReportId(null);
 
@@ -187,7 +411,24 @@ export default function AdminReports() {
     }
 
     setFeedback({ tone: "success", text: "Rapporten avvisades." });
-    await loadReports();
+    await loadAdminData(reportStatusFilter);
+  }
+
+  async function handlePriceActiveChange(priceId: string, isActive: boolean) {
+    setActionPriceId(priceId);
+    setFeedback(null);
+
+    const result = isActive ? await reactivateBeerPrice(priceId) : await deactivateBeerPrice(priceId);
+
+    setActionPriceId(null);
+
+    if (!result.ok) {
+      setFeedback({ tone: "error", text: result.message ?? "Priset kunde inte uppdateras." });
+      return;
+    }
+
+    setFeedback({ tone: "success", text: isActive ? "Priset återaktiverades." : "Priset avaktiverades och döljs publikt." });
+    await loadAdminData(reportStatusFilter);
   }
 
   if (authState === "checking") {
@@ -208,21 +449,14 @@ export default function AdminReports() {
           <p className="text-sm font-bold uppercase tracking-normal text-copper">Admin</p>
           <h1 className="mt-3 text-3xl font-black text-ink">Logga in för moderering</h1>
           <form className="mt-6 grid gap-4" onSubmit={handleSignIn}>
-            <label className="grid gap-2 text-sm font-bold text-ink">
+            <label className={labelClass}>
               E-post
-              <input
-                className="rounded-md border border-black/15 px-3 py-3 font-medium"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-              />
+              <input className={inputClass} type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
             </label>
-            <label className="grid gap-2 text-sm font-bold text-ink">
+            <label className={labelClass}>
               Lösenord
               <input
-                className="rounded-md border border-black/15 px-3 py-3 font-medium"
+                className={inputClass}
                 type="password"
                 autoComplete="current-password"
                 value={password}
@@ -234,11 +468,7 @@ export default function AdminReports() {
               Logga in
             </button>
           </form>
-          {feedback && (
-            <p className={`mt-4 rounded-md px-4 py-3 text-sm font-semibold ring-1 ${feedbackClass(feedback.tone)}`}>
-              {feedback.text}
-            </p>
-          )}
+          {feedback && <p className={`mt-4 rounded-md px-4 py-3 text-sm font-semibold ring-1 ${feedbackClass(feedback.tone)}`}>{feedback.text}</p>}
         </div>
       </section>
     );
@@ -249,16 +479,16 @@ export default function AdminReports() {
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-normal text-copper">Admin</p>
-          <h1 className="mt-3 text-4xl font-black text-ink sm:text-5xl">Moderera rapporter</h1>
+          <h1 className="mt-3 text-4xl font-black text-ink sm:text-5xl">Moderera data</h1>
           <p className="mt-3 text-base leading-7 text-ink/70">
-            Godkända rapporter blir verifierade priser. Avvisade rapporter visas inte publikt.
+            Justera rapporter före godkännande, avvisa skräpdata och dölj felaktiga publika priser utan hårdradering.
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
             className="rounded-md border border-black/15 bg-white px-4 py-3 font-black text-ink hover:border-hop hover:text-hop"
             type="button"
-            onClick={loadReports}
+            onClick={() => loadAdminData(reportStatusFilter)}
             disabled={isLoadingReports}
           >
             {isLoadingReports ? "Uppdaterar..." : "Uppdatera"}
@@ -269,95 +499,299 @@ export default function AdminReports() {
         </div>
       </div>
 
-      {feedback && (
-        <p className={`mt-6 rounded-md px-4 py-3 text-sm font-semibold ring-1 ${feedbackClass(feedback.tone)}`}>
-          {feedback.text}
-        </p>
-      )}
+      {feedback && <p className={`mt-6 rounded-md px-4 py-3 text-sm font-semibold ring-1 ${feedbackClass(feedback.tone)}`}>{feedback.text}</p>}
 
       <div className="mt-8 rounded-lg border border-black/10 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-2xl font-black text-ink">Väntande rapporter</h2>
-          <p className="text-sm font-bold text-ink/60">{isLoadingReports ? "Laddar..." : reportCountLabel}</p>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-2xl font-black text-ink">Rapporter</h2>
+            <p className="mt-1 text-sm font-bold text-ink/60">{isLoadingReports ? "Laddar..." : reportCountLabel}</p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-4">
+            {statusFilters.map((filter) => {
+              const count = filter === "all" ? reportCounts.pending + reportCounts.approved + reportCounts.rejected : reportCounts[filter];
+              const isSelected = reportStatusFilter === filter;
+
+              return (
+                <button
+                  key={filter}
+                  className={`rounded-md px-3 py-2 text-sm font-black ${
+                    isSelected ? "bg-ink text-white" : "border border-black/15 bg-white text-ink hover:border-hop hover:text-hop"
+                  }`}
+                  type="button"
+                  onClick={() => setReportStatusFilter(filter)}
+                >
+                  {filter === "all" ? "Alla" : statusLabels[filter]} ({count})
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {!isLoadingReports && reports.length === 0 && (
           <div className="mt-5 rounded-lg bg-foam p-6 text-center">
-            <h3 className="text-xl font-black text-ink">Inga rapporter väntar</h3>
-            <p className="mt-2 text-ink/70">När publika rapporter skickas in visas de här för granskning.</p>
+            <h3 className="text-xl font-black text-ink">Inga rapporter i filtret</h3>
+            <p className="mt-2 text-ink/70">Byt filter för att se historik eller vänta på nya publika rapporter.</p>
           </div>
         )}
 
         {reports.length > 0 && (
           <div className="mt-5 grid gap-4">
-            {reports.map((report) => (
-              <article key={report.id} className="rounded-lg border border-black/10 bg-foam p-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <h3 className="text-2xl font-black text-ink">{getVenueDisplayName(report)}</h3>
-                      <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">
-                        {getVenueBadgeText(report)}
+            {reports.map((report) =>
+              report.status === "pending" ? (
+                <PendingReportCard
+                  key={report.id}
+                  report={report}
+                  venues={venues}
+                  edit={editStates[report.id] ?? makeInitialEditState(report)}
+                  rejectState={rejectStates[report.id] ?? makeInitialRejectState()}
+                  isBusy={actionReportId === report.id}
+                  onEdit={(patch) => updateEditState(report.id, patch)}
+                  onRejectEdit={(patch) => updateRejectState(report.id, patch)}
+                  onApprove={() => handleApprove(report)}
+                  onReject={() => handleReject(report.id)}
+                />
+              ) : (
+                <HistoryReportCard key={report.id} report={report} />
+              ),
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-8 rounded-lg border border-black/10 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-black text-ink">Publika priser</h2>
+            <p className="mt-1 text-sm font-semibold text-ink/60">Senaste 100 priserna. Inaktiva priser döljs från den publika listan.</p>
+          </div>
+          <span className="w-fit rounded-full bg-foam px-3 py-1 text-xs font-black text-ink ring-1 ring-black/10">{adminPrices.length} priser</span>
+        </div>
+
+        {adminPrices.length === 0 && !isLoadingReports && (
+          <div className="mt-5 rounded-lg bg-foam p-6 text-center">
+            <h3 className="text-xl font-black text-ink">Inga priser att visa</h3>
+            <p className="mt-2 text-ink/70">När verifierade priser finns i databasen visas de här.</p>
+          </div>
+        )}
+
+        {adminPrices.length > 0 && (
+          <div className="mt-5 grid gap-3">
+            {adminPrices.map((price) => (
+              <article key={price.id} className="rounded-lg border border-black/10 bg-foam p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="grid gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-xl font-black text-ink">{price.venue.name}</h3>
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${activeBadgeClass(price.is_active)}`}>
+                        {price.is_active === false ? "Inaktivt/dolt pris" : "Aktivt pris"}
+                      </span>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">
+                        {price.is_verified ? "Verifierad" : "Ej verifierad"}
                       </span>
                     </div>
-                    <p className="mt-1 text-sm font-semibold text-ink/60">Rapporterad {formatDate(report.created_at)}</p>
-                    <p className="mt-1 text-sm font-semibold text-ink/60">{getVenueDetailText(report)}</p>
+                    <p className="text-sm font-semibold text-ink/70">
+                      {price.beer_name} · {formatSek(price.price_sek)} · {price.volume_cl} cl · {formatPricePerLiter(price.price_per_liter_sek)} ·{" "}
+                      {priceTypeLabels[price.price_type]} · observerat {formatDate(price.observed_at)}
+                    </p>
                   </div>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <button
-                      className="rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink disabled:cursor-not-allowed disabled:bg-ink/40"
-                      type="button"
-                      onClick={() => handleApprove(report.id)}
-                      disabled={actionReportId === report.id}
-                    >
-                      {actionReportId === report.id ? "Hanterar..." : "Godkänn"}
-                    </button>
-                    <button
-                      className="rounded-md border border-copper bg-white px-4 py-3 font-black text-copper hover:bg-copper hover:text-white disabled:cursor-not-allowed disabled:border-ink/30 disabled:text-ink/40"
-                      type="button"
-                      onClick={() => handleReject(report.id)}
-                      disabled={actionReportId === report.id}
-                    >
-                      Avvisa
-                    </button>
-                  </div>
+                  <button
+                    className={`rounded-md px-4 py-3 font-black disabled:cursor-not-allowed disabled:bg-ink/40 ${
+                      price.is_active === false ? "bg-hop text-white hover:bg-ink" : "border border-copper bg-white text-copper hover:bg-copper hover:text-white"
+                    }`}
+                    type="button"
+                    onClick={() => handlePriceActiveChange(price.id, price.is_active === false)}
+                    disabled={actionPriceId === price.id}
+                  >
+                    {actionPriceId === price.id ? "Uppdaterar..." : price.is_active === false ? "Återaktivera" : "Avaktivera"}
+                  </button>
                 </div>
-
-                <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="rounded-md bg-white p-3">
-                    <dt className="text-xs font-bold uppercase tracking-normal text-ink/50">Öl/prisnamn</dt>
-                    <dd className="mt-1 font-black text-ink">{report.beer_name}</dd>
-                  </div>
-                  <div className="rounded-md bg-white p-3">
-                    <dt className="text-xs font-bold uppercase tracking-normal text-ink/50">Pris</dt>
-                    <dd className="mt-1 font-black text-ink">{formatSek(report.price_sek)}</dd>
-                  </div>
-                  <div className="rounded-md bg-white p-3">
-                    <dt className="text-xs font-bold uppercase tracking-normal text-ink/50">Volym</dt>
-                    <dd className="mt-1 font-black text-ink">{report.volume_cl} cl</dd>
-                  </div>
-                  <div className="rounded-md bg-white p-3">
-                    <dt className="text-xs font-bold uppercase tracking-normal text-ink/50">Kr/liter</dt>
-                    <dd className="mt-1 font-black text-hop">{formatPricePerLiter(report.price_per_liter_sek)}</dd>
-                  </div>
-                  <div className="rounded-md bg-white p-3">
-                    <dt className="text-xs font-bold uppercase tracking-normal text-ink/50">Pristyp</dt>
-                    <dd className="mt-1 font-black text-ink">{priceTypeLabels[report.price_type]}</dd>
-                  </div>
-                  <div className="rounded-md bg-white p-3">
-                    <dt className="text-xs font-bold uppercase tracking-normal text-ink/50">Observerat</dt>
-                    <dd className="mt-1 font-black text-ink">{formatDate(report.observed_at)}</dd>
-                  </div>
-                  <div className="rounded-md bg-white p-3 sm:col-span-2">
-                    <dt className="text-xs font-bold uppercase tracking-normal text-ink/50">Kommentar</dt>
-                    <dd className="mt-1 font-semibold text-ink/75">{report.reporter_note || "Ingen kommentar"}</dd>
-                  </div>
-                </dl>
               </article>
             ))}
           </div>
         )}
       </div>
     </section>
+  );
+}
+
+function PendingReportCard({
+  report,
+  venues,
+  edit,
+  rejectState,
+  isBusy,
+  onEdit,
+  onRejectEdit,
+  onApprove,
+  onReject,
+}: {
+  report: AdminPriceReport;
+  venues: Venue[];
+  edit: ReportEditState;
+  rejectState: RejectState;
+  isBusy: boolean;
+  onEdit: (patch: Partial<ReportEditState>) => void;
+  onRejectEdit: (patch: Partial<RejectState>) => void;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const selectedVenue = venues.find((venue) => venue.id === edit.venueId) ?? null;
+  const price = parsePositiveDecimal(edit.priceSek);
+  const volume = parsePositiveDecimal(edit.volumeCl);
+  const calculatedPricePerLiter = price != null && volume != null ? calculatePricePerLiter(price, volume) : null;
+
+  return (
+    <article className="rounded-lg border border-black/10 bg-foam p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-2xl font-black text-ink">{getVenueDisplayName(report)}</h3>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">{getVenueBadgeText(report)}</span>
+            <span className={`rounded-full px-3 py-1 text-xs font-black ${statusBadgeClass(report.status)}`}>{statusLabels[report.status]}</span>
+          </div>
+          <p className="mt-1 text-sm font-semibold text-ink/60">Rapporterad {formatDate(report.created_at)}</p>
+          <p className="mt-1 text-sm font-semibold text-ink/60">{getVenueDetailText(report)}</p>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <fieldset className="grid gap-3 rounded-md bg-white p-3 lg:col-span-2">
+          <legend className="px-1 text-sm font-black text-ink">Serveringsställe</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex items-center gap-3 rounded-md border border-black/15 px-3 py-3 text-sm font-bold text-ink">
+              <input type="radio" checked={edit.venueMode === "existing"} onChange={() => onEdit({ venueMode: "existing" })} disabled={venues.length === 0} />
+              Koppla till befintligt ställe
+            </label>
+            <label className="flex items-center gap-3 rounded-md border border-black/15 px-3 py-3 text-sm font-bold text-ink">
+              <input type="radio" checked={edit.venueMode === "new"} onChange={() => onEdit({ venueMode: "new", venueId: "" })} />
+              Använd nytt ställe
+            </label>
+          </div>
+          {edit.venueMode === "existing" ? (
+            <label className={labelClass}>
+              Befintligt ställe
+              <select className={inputClass} value={edit.venueId} onChange={(event) => onEdit({ venueId: event.target.value })}>
+                <option value="">Välj ställe</option>
+                {venues.map((venue) => (
+                  <option key={venue.id} value={venue.id}>
+                    {venue.name}
+                  </option>
+                ))}
+              </select>
+              <OriginalValue show={changedText(selectedVenue?.name, getVenueDisplayName(report))} value={getVenueDisplayName(report)} />
+            </label>
+          ) : (
+            <label className={labelClass}>
+              Nytt ställe
+              <input className={inputClass} value={edit.venueName} onChange={(event) => onEdit({ venueName: event.target.value })} />
+              <OriginalValue show={changedText(edit.venueName, getVenueDisplayName(report))} value={getVenueDisplayName(report)} />
+            </label>
+          )}
+        </fieldset>
+
+        <label className={labelClass}>
+          Öl/prisnamn
+          <input className={inputClass} value={edit.beerName} onChange={(event) => onEdit({ beerName: event.target.value })} />
+          <OriginalValue show={changedText(edit.beerName, report.beer_name)} value={report.beer_name} />
+        </label>
+        <label className={labelClass}>
+          Pris i kronor
+          <input className={inputClass} inputMode="decimal" value={edit.priceSek} onChange={(event) => onEdit({ priceSek: event.target.value })} />
+          <OriginalValue show={changedText(edit.priceSek, decimalValue(report.price_sek))} value={formatSek(report.price_sek)} />
+        </label>
+        <label className={labelClass}>
+          Volym i cl
+          <input className={inputClass} inputMode="decimal" value={edit.volumeCl} onChange={(event) => onEdit({ volumeCl: event.target.value })} />
+          <OriginalValue show={changedText(edit.volumeCl, decimalValue(report.volume_cl))} value={`${report.volume_cl} cl`} />
+        </label>
+        <label className={labelClass}>
+          Pristyp
+          <select className={inputClass} value={edit.priceType} onChange={(event) => onEdit({ priceType: event.target.value as PriceType })}>
+            {validPriceTypes.map((priceType) => (
+              <option key={priceType} value={priceType}>
+                {priceTypeLabels[priceType]}
+              </option>
+            ))}
+          </select>
+          <OriginalValue show={edit.priceType !== report.price_type} value={priceTypeLabels[report.price_type]} />
+        </label>
+        <label className={labelClass}>
+          Observerat datum
+          <input className={inputClass} type="date" value={edit.observedAt} onChange={(event) => onEdit({ observedAt: event.target.value })} />
+          <OriginalValue show={changedText(edit.observedAt, dateInputValue(report.observed_at))} value={formatDate(report.observed_at)} />
+        </label>
+        <label className={`${labelClass} lg:col-span-2`}>
+          Kommentar/adminnotering
+          <textarea className={`${inputClass} min-h-24`} value={edit.reporterNote} onChange={(event) => onEdit({ reporterNote: event.target.value })} />
+          <OriginalValue show={changedText(edit.reporterNote, report.reporter_note)} value={report.reporter_note || "Ingen kommentar"} />
+        </label>
+      </div>
+
+      <div className="mt-4 rounded-md bg-white p-3">
+        <p className="text-sm font-bold text-ink/55">Justerat literpris</p>
+        <p className="mt-1 text-2xl font-black text-hop">
+          {calculatedPricePerLiter == null ? "Kontrollera pris och volym" : formatPricePerLiter(calculatedPricePerLiter)}
+        </p>
+      </div>
+
+      <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-end">
+        <label className={labelClass}>
+          Avvisningsorsak
+          <select className={inputClass} value={rejectState.reason} onChange={(event) => onRejectEdit({ reason: event.target.value })}>
+            {rejectionReasons.map((reason) => (
+              <option key={reason.value} value={reason.value}>
+                {reason.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {rejectState.reason === "annat" && (
+          <label className={labelClass}>
+            Annan orsak
+            <input className={inputClass} value={rejectState.customReason} onChange={(event) => onRejectEdit({ customReason: event.target.value })} />
+          </label>
+        )}
+        <button
+          className="rounded-md bg-hop px-4 py-3 font-black text-white hover:bg-ink disabled:cursor-not-allowed disabled:bg-ink/40"
+          type="button"
+          onClick={onApprove}
+          disabled={isBusy}
+        >
+          {isBusy ? "Hanterar..." : "Godkänn"}
+        </button>
+        <button
+          className="rounded-md border border-copper bg-white px-4 py-3 font-black text-copper hover:bg-copper hover:text-white disabled:cursor-not-allowed disabled:border-ink/30 disabled:text-ink/40"
+          type="button"
+          onClick={onReject}
+          disabled={isBusy}
+        >
+          Avvisa
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function HistoryReportCard({ report }: { report: AdminPriceReport }) {
+  return (
+    <article className="rounded-lg border border-black/10 bg-foam p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-xl font-black text-ink">{getVenueDisplayName(report)}</h3>
+            <span className={`rounded-full px-3 py-1 text-xs font-black ${statusBadgeClass(report.status)}`}>{statusLabels[report.status]}</span>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-ink ring-1 ring-black/15">{getVenueBadgeText(report)}</span>
+          </div>
+          <p className="mt-2 text-sm font-semibold text-ink/70">
+            {report.beer_name} · {formatSek(report.price_sek)} · {report.volume_cl} cl · {formatPricePerLiter(report.price_per_liter_sek)} ·{" "}
+            {priceTypeLabels[report.price_type]}
+          </p>
+          <p className="mt-1 text-sm text-ink/60">
+            Granskad {formatDate(report.reviewed_at)} {report.rejection_reason ? `· Orsak: ${report.rejection_reason}` : ""}
+          </p>
+        </div>
+      </div>
+    </article>
   );
 }
